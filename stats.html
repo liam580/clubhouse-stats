@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>your stats — clubhouse</title>
+
+<!--
+  This canvas is loaded inside the Clubhouse Optix mobile app via a URL like:
+  https://<host>/stats.html?token={token}&user_id={user_id}&member_id={member_id}
+
+  Optix replaces the macros with the logged-in member's session token + IDs.
+  The page calls the Supabase Edge Function `/stats`, which validates the
+  token server-side and returns the player's career + session stats. The
+  service_role key is never exposed to the browser.
+
+  TUSKER GROTESK + ITC AVANT GARDE are proprietary fonts. To match the rest
+  of Clubhouse's site copy the @font-face data:font blocks from
+  ../camp-flyer.html (or junior-camp-v2.html) into the <style> below where
+  marked. Until then the fallbacks (Anton + system) keep things on-brand-ish.
+-->
+
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Bai+Jamjuree:wght@300;400;600&display=swap" rel="stylesheet">
+
+<style>
+  /* ── PASTE @font-face BLOCKS FOR TUSKER GROTESK + ITC AVANT GARDE HERE ─── */
+
+  :root {
+    --green:  #0d2618;
+    --green2: #14331f;
+    --cream:  #ede4cf;
+    --cream2: #f3ecda;
+    --maroon: #5b1d1d;
+    --blue:   #b6d3df;
+
+    --f-display: 'Tusker Grotesk', 'Anton', 'Impact', system-ui, sans-serif;
+    --f-eyebrow: 'ITC Avant Garde', 'Bai Jamjuree', system-ui, sans-serif;
+    --f-body:    'Bai Jamjuree', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--green); color: var(--cream); font-family: var(--f-body); }
+  body {
+    min-height: 100vh;
+    padding: 24px 20px 80px;
+    font-weight: 300;
+    line-height: 1.65;
+    font-size: 15px;
+    background-image:
+      repeating-linear-gradient(0deg,
+        rgba(237, 228, 207, 0.04) 0,
+        rgba(237, 228, 207, 0.04) 1px,
+        transparent 1px,
+        transparent 40px),
+      repeating-linear-gradient(90deg,
+        rgba(237, 228, 207, 0.04) 0,
+        rgba(237, 228, 207, 0.04) 1px,
+        transparent 1px,
+        transparent 40px);
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  .eyebrow {
+    font-family: var(--f-eyebrow);
+    font-weight: 400;
+    font-size: 9px;
+    letter-spacing: 2.8px;
+    text-transform: uppercase;
+    color: var(--maroon);
+    margin-bottom: 6px;
+  }
+  .eyebrow.cream { color: var(--cream); opacity: 0.55; }
+
+  /* ── header ─────────────────────────────────────────────────────────── */
+
+  header { padding-bottom: 28px; }
+  header h1 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: clamp(40px, 11vw, 64px);
+    text-transform: uppercase;
+    letter-spacing: -1.5px;
+    line-height: 0.95;
+    margin-top: 4px;
+  }
+  header h1 em {
+    font-style: italic;
+    color: var(--blue);
+    font-weight: 600;
+  }
+  .name {
+    font-family: var(--f-eyebrow);
+    font-weight: 400;
+    font-size: 13px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-top: 14px;
+    opacity: 0.7;
+  }
+
+  hr.div {
+    border: none;
+    height: 1px;
+    background: var(--cream);
+    opacity: 0.10;
+    margin: 24px 0;
+  }
+
+  /* ── stat grid ──────────────────────────────────────────────────────── */
+
+  section { margin-top: 32px; }
+  section > .eyebrow { margin-bottom: 12px; }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px 18px;
+  }
+  @media (min-width: 540px) { .stat-grid { grid-template-columns: repeat(3, 1fr); } }
+
+  .stat {
+    background: var(--green2);
+    border-radius: 12px;
+    padding: 16px 16px 18px;
+  }
+  .stat .label {
+    font-family: var(--f-eyebrow);
+    font-weight: 400;
+    font-size: 9px;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--cream);
+    opacity: 0.55;
+    margin-bottom: 4px;
+  }
+  .stat .value {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: clamp(34px, 9vw, 52px);
+    line-height: 1;
+    letter-spacing: -1.5px;
+    color: var(--cream);
+  }
+  .stat .unit {
+    font-family: var(--f-body);
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--cream);
+    opacity: 0.55;
+    margin-left: 4px;
+  }
+  .stat .value.dim { opacity: 0.35; }
+
+  /* ── sessions ───────────────────────────────────────────────────────── */
+
+  .session {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px 14px;
+    padding: 14px 0;
+    border-bottom: 1px solid rgba(237, 228, 207, 0.08);
+  }
+  .session:last-child { border-bottom: none; }
+  .session .date {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 22px;
+    letter-spacing: -0.5px;
+    text-transform: uppercase;
+  }
+  .session .meta {
+    font-family: var(--f-eyebrow);
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--cream);
+    opacity: 0.55;
+    align-self: end;
+    text-align: right;
+  }
+  .session .duration {
+    font-size: 12px;
+    color: var(--cream);
+    opacity: 0.55;
+    grid-column: 1 / 2;
+  }
+  .pill {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 50px;
+    border: 1px solid rgba(237, 228, 207, 0.18);
+    font-family: var(--f-eyebrow);
+    font-size: 9px;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    color: var(--cream);
+    opacity: 0.85;
+  }
+
+  /* ── states ─────────────────────────────────────────────────────────── */
+
+  .state {
+    text-align: center;
+    padding: 60px 24px;
+    color: var(--cream);
+    opacity: 0.7;
+    font-size: 14px;
+  }
+  .state .big {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 28px;
+    text-transform: uppercase;
+    letter-spacing: -1px;
+    color: var(--cream);
+    opacity: 1;
+    margin-bottom: 8px;
+  }
+  .state .small {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .state em { color: var(--blue); font-style: italic; }
+  button.retry {
+    margin-top: 20px;
+    background: var(--maroon);
+    color: var(--cream);
+    border: none;
+    padding: 10px 24px;
+    font-family: var(--f-eyebrow);
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    border-radius: 50px;
+    cursor: pointer;
+  }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- LOADING -->
+  <div id="loading" class="state">
+    <div class="small">loading your stats…</div>
+  </div>
+
+  <!-- ERROR -->
+  <div id="error" class="state hidden">
+    <div class="big">something went sideways</div>
+    <div class="small" id="error-detail"></div>
+    <button class="retry" onclick="loadStats()">try again</button>
+  </div>
+
+  <!-- EMPTY (no shots yet) -->
+  <div id="empty" class="state hidden">
+    <div class="big">first shot incoming</div>
+    <div class="small">your stats will appear here after your first session.<br><em>swing your swing.</em></div>
+  </div>
+
+  <!-- POPULATED -->
+  <main id="stats" class="hidden">
+    <header>
+      <div class="eyebrow">your stats</div>
+      <h1 id="hero"></h1>
+      <div class="name" id="player-name"></div>
+    </header>
+
+    <hr class="div">
+
+    <section>
+      <div class="eyebrow">career</div>
+      <div class="stat-grid">
+        <div class="stat"><div class="label">total shots</div><div class="value" id="s-total"></div></div>
+        <div class="stat"><div class="label">sessions</div><div class="value" id="s-sessions"></div></div>
+        <div class="stat"><div class="label">avg carry</div><div class="value" id="s-carry"><span class="unit">yds</span></div></div>
+        <div class="stat"><div class="label">longest</div><div class="value" id="s-longest"><span class="unit">yds</span></div></div>
+        <div class="stat"><div class="label">avg ball speed</div><div class="value" id="s-bs"><span class="unit">mph</span></div></div>
+        <div class="stat"><div class="label">top speed</div><div class="value" id="s-tops"><span class="unit">mph</span></div></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="eyebrow">recent sessions</div>
+      <div id="session-list"></div>
+    </section>
+  </main>
+
+</div>
+
+<script>
+  // ── config ────────────────────────────────────────────────────────────
+  // Edit only this block before deploy.
+  const STATS_API_URL = 'https://ufzmrvnunjmlqqwjqprq.supabase.co/functions/v1/stats';
+
+  // ── helpers ───────────────────────────────────────────────────────────
+  const $ = (id) => document.getElementById(id);
+  const show = (id) => $(id).classList.remove('hidden');
+  const hide = (id) => $(id).classList.add('hidden');
+
+  function fmtNum(n, digits = 0) {
+    if (n == null || isNaN(n)) return '—';
+    return Number(n).toLocaleString(undefined, {
+      minimumFractionDigits: digits, maximumFractionDigits: digits
+    });
+  }
+  function fmtDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).toLowerCase();
+  }
+  function fmtDuration(start, end) {
+    if (!start || !end) return '';
+    const ms = new Date(end) - new Date(start);
+    if (!isFinite(ms) || ms <= 0) return '';
+    const mins = Math.round(ms / 60000);
+    if (mins < 60) return mins + ' min';
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return m ? `${h}h ${m}m` : `${h}h`;
+  }
+  function setText(id, value, suffix = '') {
+    const el = $(id);
+    const unit = el.querySelector('.unit');
+    el.firstChild ? null : null;
+    // wipe everything except the .unit child
+    [...el.childNodes].forEach((n) => { if (!n.classList || !n.classList.contains('unit')) el.removeChild(n); });
+    const text = document.createTextNode(value + (suffix || ''));
+    el.insertBefore(text, unit || null);
+    if (value === '—') el.classList.add('dim'); else el.classList.remove('dim');
+  }
+
+  // ── main ──────────────────────────────────────────────────────────────
+
+  async function loadStats() {
+    hide('error'); hide('empty'); hide('stats');
+    show('loading');
+
+    const params = new URLSearchParams(location.search);
+    const token   = params.get('token');
+    const userId  = params.get('user_id');
+
+    if (!token || !userId) {
+      hide('loading');
+      $('error-detail').textContent = 'this page must be opened from inside the clubhouse app.';
+      return show('error');
+    }
+
+    try {
+      const url = `${STATS_API_URL}?token=${encodeURIComponent(token)}&user_id=${encodeURIComponent(userId)}`;
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || body.error || ('http ' + res.status));
+      }
+      const data = await res.json();
+      hide('loading');
+      render(data);
+    } catch (err) {
+      hide('loading');
+      $('error-detail').textContent = String(err.message || err);
+      show('error');
+    }
+  }
+
+  function render(data) {
+    if (!data.player || !data.career || data.career.total_shots === 0) {
+      return show('empty');
+    }
+    show('stats');
+
+    // header
+    const name = data.player.display_name || 'player';
+    const firstName = name.split(' ')[0] || 'you';
+    $('hero').innerHTML = firstName.toLowerCase() + '<br><em>swings.</em>';
+    $('player-name').textContent = name;
+
+    // career stats
+    const c = data.career;
+    setText('s-total',    fmtNum(c.total_shots));
+    setText('s-sessions', fmtNum(c.total_sessions));
+    setText('s-carry',    fmtNum(c.avg_carry_distance, 0), ' ');
+    setText('s-longest',  fmtNum(c.longest_carry, 0), ' ');
+    setText('s-bs',       fmtNum(c.avg_ball_speed, 1), ' ');
+    setText('s-tops',     fmtNum(c.fastest_ball_speed, 1), ' ');
+
+    // sessions
+    const list = $('session-list');
+    list.innerHTML = '';
+    if (!data.sessions || data.sessions.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'state';
+      empty.innerHTML = '<div class="small">your sessions will show up here.</div>';
+      list.appendChild(empty);
+      return;
+    }
+    for (const s of data.sessions) {
+      const row = document.createElement('div');
+      row.className = 'session';
+
+      const date = document.createElement('div');
+      date.className = 'date';
+      date.textContent = fmtDate(s.started_at);
+      row.appendChild(date);
+
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const bay = `bay ${s.bay_number}`;
+      const shots = `${s.shot_count || 0} shots`;
+      const best = s.best_carry ? `${fmtNum(s.best_carry, 0)} yd best` : '';
+      meta.innerHTML = `${bay}<br>${shots}${best ? ' · ' + best : ''}`;
+      row.appendChild(meta);
+
+      const dur = fmtDuration(s.started_at, s.ended_at);
+      if (dur) {
+        const d2 = document.createElement('div');
+        d2.className = 'duration';
+        d2.textContent = dur;
+        row.appendChild(d2);
+      }
+
+      list.appendChild(row);
+    }
+  }
+
+  loadStats();
+</script>
+
+</body>
+</html>
