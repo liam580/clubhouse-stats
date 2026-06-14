@@ -1,0 +1,4 @@
+# bay-PC config — never commit. .env.example shows the expected shape.
+relay/.env
+relay/*.log
+relay/__pycache__/

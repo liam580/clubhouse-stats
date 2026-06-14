@@ -8,8 +8,11 @@ career stats + recent sessions, and renders.
 
 - **Page:** [stats.html](stats.html) — single static file, GitHub Pages-hosted
 - **Edge Function:** in the `clubhouse` repo under `canvas/edge-functions/stats/index.ts`
+- **Bay relay:** [relay/](relay/) — single-file Python relay that runs on each
+  bay PC, proxies Uneekor → GSPro on the GSPro OpenAPI Connect protocol, and
+  writes every shot to Supabase. See [relay/README.md](relay/README.md).
 - **Data:** Supabase project `ufzmrvnunjmlqqwjqprq`, `players` / `sessions` /
-  `shots` tables populated by the GS Pro relay running on each simulator PC
+  `shots` tables populated by the relay above.
 
 Brand: dark green `#0d2618`, cream `#ede4cf`, Tusker Grotesk headlines.
 
