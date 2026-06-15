@@ -218,10 +218,16 @@ function sanitizeReason(raw: unknown): string {
   return SAFE_AUTH_REASONS.has(head) ? head : "unknown";
 }
 
-function errorResponse(req: Request, status: number, code: string, internalDetail?: unknown): Response {
+function errorResponse(
+  req: Request,
+  status: number,
+  code: string,
+  internalDetail?: unknown,
+  extras?: Record<string, unknown>,
+): Response {
   // Never leak raw error.message in production responses; just log it.
   if (internalDetail !== undefined) {
-    console.error(`[stats] error ${status} ${code}:`, internalDetail);
+    console.error(`[stats] error ${status} ${code}:`, internalDetail, extras ?? "");
   }
   const body: Record<string, unknown> = { error: code };
   if (!IS_PROD && internalDetail !== undefined) {
@@ -233,6 +239,11 @@ function errorResponse(req: Request, status: number, code: string, internalDetai
   // canvas can show why auth failed (dashboard logs aren't always available).
   if (status === 401 && code === "unauthorized" && internalDetail !== undefined) {
     body.reason_code = sanitizeReason(internalDetail);
+  }
+  if (extras) {
+    for (const [k, v] of Object.entries(extras)) {
+      body[k] = v;
+    }
   }
   return jsonResponse(req, body, status);
 }
@@ -261,7 +272,10 @@ interface OptixMeResponse {
 async function validateOptixToken(
   token: string,
   claimedUserId: string,
-): Promise<{ ok: true; userId: string; displayName: string | null } | { ok: false; reason: string }> {
+): Promise<
+  | { ok: true; userId: string; displayName: string | null }
+  | { ok: false; reason: string; verifiedId?: string; claimedId?: string }
+> {
   // Item #14 — bound the call so a slow Optix doesn't hang every stats request.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), OPTIX_TIMEOUT_MS);
@@ -290,7 +304,12 @@ async function validateOptixToken(
       return { ok: false, reason: "no_user_id_in_optix_response" };
     }
     if (String(verifiedId) !== String(claimedUserId)) {
-      return { ok: false, reason: "user_id_mismatch" };
+      return {
+        ok: false,
+        reason: "user_id_mismatch",
+        verifiedId: String(verifiedId),
+        claimedId: String(claimedUserId),
+      };
     }
     return { ok: true, userId: String(verifiedId), displayName };
   } catch (err) {
@@ -1104,7 +1123,13 @@ serve(async (req: Request) => {
 
     const auth = await validateOptixToken(token, userId);
     if (!auth.ok) {
-      return errorResponse(req, 401, "unauthorized", auth.reason);
+      // On user_id_mismatch, expose both IDs so we can pinpoint whether the
+      // canvas-config macro is pointing at the wrong field. The IDs are
+      // opaque Optix identifiers, not secrets.
+      const extras = auth.reason === "user_id_mismatch"
+        ? { verified_id: auth.verifiedId, claimed_id: auth.claimedId }
+        : undefined;
+      return errorResponse(req, 401, "unauthorized", auth.reason, extras);
     }
 
     const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {

@@ -917,6 +917,8 @@ async function fetchView(view, opts={}) {
     err.status = res.status;
     err.errorCode = body?.error ?? null;
     err.reasonCode = body?.reason_code ?? null;
+    err.verifiedId = body?.verified_id ?? null;
+    err.claimedId  = body?.claimed_id  ?? null;
     throw err;
   }
   return res.json();
@@ -1568,7 +1570,11 @@ function showError(err) {
     if (err?.status) bits.push(`http ${err.status}`);
     if (err?.errorCode) bits.push(err.errorCode);
     if (err?.reasonCode) bits.push(err.reasonCode);
-    detailEl.textContent = bits.length ? `(${bits.join(' · ')})` : '';
+    let line = bits.length ? `(${bits.join(' · ')})` : '';
+    if (err?.verifiedId || err?.claimedId) {
+      line += ` got=${err.verifiedId ?? '?'} expected=${err.claimedId ?? '?'}`;
+    }
+    detailEl.textContent = line;
   }
   showState('error');
 }
