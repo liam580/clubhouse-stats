@@ -652,6 +652,7 @@
       <div class="state-card">
         <h2 class="state-title">something went sideways</h2>
         <p class="state-body">we couldn't reach the stats service. give it another swing.</p>
+        <p class="state-body" id="state-error-detail" style="opacity:.7;font-size:.8em;margin-top:.4em;"></p>
         <button class="retry-btn" id="retry-btn" type="button">retry</button>
       </div>
     </section>
@@ -907,7 +908,17 @@ async function fetchView(view, opts={}) {
   const res = await fetch(url.toString(), {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
   });
-  if (!res.ok) throw new Error(`stats ${view} failed: ${res.status}`);
+  if (!res.ok) {
+    // Pull the response body so callers can surface error/reason_code to the
+    // user (Supabase fn logs are dashboard-only, so this is our diagnostic).
+    let body = null;
+    try { body = await res.json(); } catch (_) { /* empty/non-JSON */ }
+    const err = new Error(`stats ${view} failed: ${res.status}`);
+    err.status = res.status;
+    err.errorCode = body?.error ?? null;
+    err.reasonCode = body?.reason_code ?? null;
+    throw err;
+  }
   return res.json();
 }
 
@@ -1525,7 +1536,7 @@ async function loadTrendsForClub(clubKey) {
     showView('trends');
   } catch (err) {
     console.error('[clubhouse:stats] trends load failed', err);
-    showState('error');
+    showError(err);
   }
 }
 
@@ -1545,6 +1556,21 @@ function showState(name) {
   Object.values(states).forEach(el => el.classList.add('hidden'));
   Object.values(views).forEach(el => el.classList.add('hidden'));
   if (states[name]) states[name].classList.remove('hidden');
+}
+
+// Show the error state and append a small diagnostic line built from the
+// fetchView() error (HTTP status / error code / sanitized reason_code).
+// Helpful when debugging in-app failures where Supabase logs aren't handy.
+function showError(err) {
+  const detailEl = $('#state-error-detail');
+  if (detailEl) {
+    const bits = [];
+    if (err?.status) bits.push(`http ${err.status}`);
+    if (err?.errorCode) bits.push(err.errorCode);
+    if (err?.reasonCode) bits.push(err.reasonCode);
+    detailEl.textContent = bits.length ? `(${bits.join(' · ')})` : '';
+  }
+  showState('error');
 }
 function showView(name) {
   Object.values(states).forEach(el => el.classList.add('hidden'));
@@ -1573,7 +1599,7 @@ async function loadSession(clubKey) {
     showView('session');
   } catch (err) {
     console.error('[clubhouse:stats] session load failed', err);
-    showState('error');
+    showError(err);
   }
 }
 
@@ -1611,7 +1637,7 @@ async function loadView(name) {
     }
   } catch (err) {
     console.error('[clubhouse:stats] load failed', err);
-    showState('error');
+    showError(err);
   }
 }
 

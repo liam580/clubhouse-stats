@@ -199,6 +199,25 @@ function jsonResponse(req: Request, body: unknown, status = 200): Response {
   });
 }
 
+// Whitelist of safe-to-expose reason codes for unauthorized failures.
+// validateOptixToken() emits these — they're enum values with no user data,
+// so it's safe to surface them in the response body (helps in-app diagnostics
+// since Supabase function logs are dashboard-only). The `optix_fetch_failed:`
+// variant carries an exception message; we strip everything after the colon.
+const SAFE_AUTH_REASONS = new Set([
+  "no_user_id_in_optix_response",
+  "user_id_mismatch",
+  "optix_timeout",
+  "optix_fetch_failed",
+]);
+
+function sanitizeReason(raw: unknown): string {
+  const s = String(raw ?? "");
+  if (s.startsWith("optix_status_")) return s; // optix_status_XXX is safe
+  const head = s.split(":")[0];
+  return SAFE_AUTH_REASONS.has(head) ? head : "unknown";
+}
+
 function errorResponse(req: Request, status: number, code: string, internalDetail?: unknown): Response {
   // Never leak raw error.message in production responses; just log it.
   if (internalDetail !== undefined) {
@@ -209,6 +228,11 @@ function errorResponse(req: Request, status: number, code: string, internalDetai
     body.detail = String(internalDetail);
   } else {
     body.detail = "internal error";
+  }
+  // For 401 unauthorized, also expose a short sanitized reason_code so the
+  // canvas can show why auth failed (dashboard logs aren't always available).
+  if (status === 401 && code === "unauthorized" && internalDetail !== undefined) {
+    body.reason_code = sanitizeReason(internalDetail);
   }
   return jsonResponse(req, body, status);
 }
