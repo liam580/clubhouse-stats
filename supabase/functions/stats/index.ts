@@ -575,15 +575,33 @@ function byClubForShots(shots: ShotRow[]): ByClubRow[] {
   return nullBucket ? [...known, nullBucket] : known;
 }
 
+// Optix's canvas URL macro may substitute either booking.user.user_id (which
+// the relay stores as optix_user_id) or booking.account_id (stored as
+// optix_member_id) — the two are different ID spaces. Look up by user_id
+// first, then fall back to member_id so we hit the row regardless.
+async function lookupPlayer(
+  sb: SupabaseClient,
+  optixId: string,
+): Promise<{ id: string; display_name: string | null } | null> {
+  const { data: byUser } = await sb
+    .from("players")
+    .select("id, display_name")
+    .eq("optix_user_id", optixId)
+    .maybeSingle();
+  if (byUser) return byUser;
+  const { data: byMember } = await sb
+    .from("players")
+    .select("id, display_name")
+    .eq("optix_member_id", optixId)
+    .maybeSingle();
+  return byMember ?? null;
+}
+
 async function getCanonicalSession(
   sb: SupabaseClient,
   optixUserId: string,
 ): Promise<{ player: { id: string; display_name: string | null }; session: any | null } | null> {
-  const { data: player } = await sb
-    .from("players")
-    .select("id, display_name")
-    .eq("optix_user_id", optixUserId)
-    .maybeSingle();
+  const player = await lookupPlayer(sb, optixUserId);
 
   if (!player) return null;
 
@@ -838,11 +856,7 @@ async function handleHistory(
   sb: SupabaseClient,
   optixUserId: string,
 ): Promise<Response> {
-  const { data: player } = await sb
-    .from("players")
-    .select("id")
-    .eq("optix_user_id", optixUserId)
-    .maybeSingle();
+  const player = await lookupPlayer(sb, optixUserId);
 
   if (!player) return jsonResponse(req, <HistoryResponse>{ sessions: [] });
 
@@ -990,11 +1004,7 @@ async function handleTrends(
   optixUserId: string,
   club: string,
 ): Promise<Response> {
-  const { data: player } = await sb
-    .from("players")
-    .select("id")
-    .eq("optix_user_id", optixUserId)
-    .maybeSingle();
+  const player = await lookupPlayer(sb, optixUserId);
 
   if (!player) {
     return jsonResponse(req, <TrendsNotReadyResponse>{
