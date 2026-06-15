@@ -721,6 +721,8 @@
     </section>
   </main>
 
+<div id="diag-footer" style="text-align:center;font-size:10px;line-height:1.3;color:rgba(237,228,207,0.45);padding:8px 16px 24px;font-family:monospace;word-break:break-all;"></div>
+
 <script>
 /* ╔══════════════════════════════════════════════════════════╗
    ║ CLUBHOUSE · STATS v3                                      ║
@@ -749,6 +751,21 @@ function esc(s) {
 const _initialParams = new URLSearchParams(location.search);
 const _capturedToken = _initialParams.get("token") || "";
 const _capturedUserId = _initialParams.get("user_id") || "";
+// Temp diagnostic — show every URL param the canvas got, so we can see what
+// Optix is substituting into the macros without needing the URL bar.
+(function showDiagFooter() {
+  try {
+    const el = document.getElementById('diag-footer');
+    if (!el) return;
+    const bits = [];
+    for (const [k, v] of _initialParams.entries()) {
+      // Don't leak the bearer token, just show its length.
+      if (k === 'token') bits.push(`token=[${v.length} chars]`);
+      else bits.push(`${k}=${v}`);
+    }
+    el.textContent = `params · ${bits.length ? bits.join(' · ') : '(none)'}`;
+  } catch (_) { /* fail silent */ }
+})();
 (function stripTokenFromUrl() {
   if (!_initialParams.has("token")) return;
   try {
