@@ -909,10 +909,27 @@ function isMockMode() {
   return !h || h === "localhost" || h === "127.0.0.1" || h.endsWith(".local") || h === "file";
 }
 
+// Temp diag: append resolved player info to the footer so we can see what
+// the edge fn looked up the token as, and whether a player row matched.
+function _appendDiagFromSessionData(data) {
+  try {
+    const el = document.getElementById('diag-footer');
+    if (!el || el.dataset.appended) return;
+    const resolved = data?.player?.optix_user_id ?? 'null';
+    const name = data?.player?.display_name ?? '(no player row matched)';
+    const hasSession = data?.session ? `session=${(data.session.id || '').slice(0,8) || '?'}` : 'no session';
+    const totalShots = data?.hero?.total_shots ?? 0;
+    el.textContent += ` · resolved=${resolved} (${name}) · ${hasSession} · ${totalShots} shots`;
+    el.dataset.appended = "1";
+  } catch (_) { /* fail silent */ }
+}
+
 async function fetchView(view, opts={}) {
   if (isMockMode()) {
     await new Promise(r => setTimeout(r, 220));
-    return __MOCK_DATA__[view] || null;
+    const data = __MOCK_DATA__[view] || null;
+    if (view === 'session') _appendDiagFromSessionData(data);
+    return data;
   }
   // Token was read once at boot from ?token= and stripped from the URL.
   // It is sent ONLY as an Authorization header — never echoed back into the query.
@@ -938,7 +955,9 @@ async function fetchView(view, opts={}) {
     err.claimedId  = body?.claimed_id  ?? null;
     throw err;
   }
-  return res.json();
+  const data = await res.json();
+  if (view === 'session') _appendDiagFromSessionData(data);
+  return data;
 }
 
 // ── HELPERS ──────────────────────────────────────────────────
