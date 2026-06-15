@@ -392,17 +392,42 @@ async function shotsForSession(
   sb: SupabaseClient,
   sessionId: string,
 ): Promise<ShotRow[]> {
+  // Real shots-table columns are: ball_speed, vla, carry_distance,
+  // club_speed, face_to_target, path, club, recorded_at (+ others).
+  // `smash`, `club_path`, `face_to_path` and `created_at` don't exist;
+  // selecting them errored silently → 0 shots → empty canvas. Pull the
+  // real columns and derive the others.
   const { data, error } = await sb
     .from("shots")
     .select(
-      "club, carry_distance, ball_speed, vla, smash, club_path, face_to_target, face_to_path, created_at",
+      "club, carry_distance, ball_speed, vla, club_speed, face_to_target, path, recorded_at",
     )
     .eq("session_id", sessionId);
   if (error) {
     console.error("[stats] shots query failed", error);
     return [];
   }
-  return (data ?? []) as ShotRow[];
+  return (data ?? []).map((r: Record<string, unknown>): ShotRow => {
+    const ballSpeed = r.ball_speed as number | null | undefined;
+    const clubSpeed = r.club_speed as number | null | undefined;
+    const faceToTarget = r.face_to_target as number | null | undefined;
+    const path = r.path as number | null | undefined;
+    return {
+      club: (r.club as string | null) ?? null,
+      carry_distance: (r.carry_distance as number | null) ?? null,
+      ball_speed: ballSpeed ?? null,
+      vla: (r.vla as number | null) ?? null,
+      smash: ballSpeed != null && clubSpeed != null && clubSpeed > 0
+        ? ballSpeed / clubSpeed
+        : null,
+      club_path: path ?? null,
+      face_to_target: faceToTarget ?? null,
+      face_to_path: faceToTarget != null && path != null
+        ? faceToTarget - path
+        : null,
+      created_at: (r.recorded_at as string | null) ?? null,
+    };
+  });
 }
 
 interface SessionAggregateRow {
@@ -1055,13 +1080,24 @@ async function handleTrends(
   const points: Point[] = [];
 
   for (const sess of ordered) {
-    let q = sb.from("shots").select("carry_distance, ball_speed, smash, club").eq("session_id", sess.id);
+    // Same column-name fix as shotsForSession — `smash` doesn't exist
+    // on the table, derive it from ball_speed / club_speed.
+    let q = sb.from("shots").select("carry_distance, ball_speed, club_speed, club").eq("session_id", sess.id);
     if (clubFilter) q = q.eq("club", clubFilter);
     const { data: shots } = await q;
-    const rows = (shots ?? []) as ShotRow[];
+    const rows = (shots ?? []) as Array<{
+      carry_distance: number | null;
+      ball_speed: number | null;
+      club_speed: number | null;
+      club: string | null;
+    }>;
     const carries = rows.map((r) => r.carry_distance).filter((v): v is number => v != null);
     const speeds = rows.map((r) => r.ball_speed).filter((v): v is number => v != null);
-    const smashes = rows.map((r) => r.smash).filter((v): v is number => v != null);
+    const smashes = rows
+      .map((r) => (r.ball_speed != null && r.club_speed != null && r.club_speed > 0
+        ? r.ball_speed / r.club_speed
+        : null))
+      .filter((v): v is number => v != null);
     points.push({
       date: sess.started_at.slice(0, 10),
       carry: maxOrNull(carries),
