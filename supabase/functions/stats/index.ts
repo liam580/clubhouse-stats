@@ -388,6 +388,46 @@ interface ShotRow {
   created_at?: string | null;
 }
 
+// Multi-session variant — used when the canvas pins to a booking that may
+// span more than one Supabase session (split-session legacy data).
+async function shotsForSessionIds(
+  sb: SupabaseClient,
+  sessionIds: string[],
+): Promise<ShotRow[]> {
+  if (sessionIds.length === 0) return [];
+  const { data, error } = await sb
+    .from("shots")
+    .select(
+      "club, carry_distance, ball_speed, vla, club_speed, face_to_target, path, recorded_at",
+    )
+    .in("session_id", sessionIds);
+  if (error) {
+    console.error("[stats] shots multi query failed", error);
+    return [];
+  }
+  return (data ?? []).map((r: Record<string, unknown>): ShotRow => {
+    const ballSpeed = r.ball_speed as number | null | undefined;
+    const clubSpeed = r.club_speed as number | null | undefined;
+    const faceToTarget = r.face_to_target as number | null | undefined;
+    const path = r.path as number | null | undefined;
+    return {
+      club: (r.club as string | null) ?? null,
+      carry_distance: (r.carry_distance as number | null) ?? null,
+      ball_speed: ballSpeed ?? null,
+      vla: (r.vla as number | null) ?? null,
+      smash: ballSpeed != null && clubSpeed != null && clubSpeed > 0
+        ? ballSpeed / clubSpeed
+        : null,
+      club_path: path ?? null,
+      face_to_target: faceToTarget ?? null,
+      face_to_path: faceToTarget != null && path != null
+        ? faceToTarget - path
+        : null,
+      created_at: (r.recorded_at as string | null) ?? null,
+    };
+  });
+}
+
 async function shotsForSession(
   sb: SupabaseClient,
   sessionId: string,
@@ -623,6 +663,48 @@ async function lookupPlayer(
   return byMember ?? null;
 }
 
+// Returns the set of Supabase sessions that belong to a single Optix booking
+// (split sessions are possible pre-pivot), plus a synthetic "session" object
+// that aggregates their bay/start/end/shot_count so the rest of the response
+// builder can treat them as a single entity. Returns null if the booking has
+// no sessions for this player.
+async function getSessionsForBooking(
+  sb: SupabaseClient,
+  playerId: string,
+  bookingId: string,
+): Promise<{ sessionIds: string[]; synthetic: {
+  id: string;
+  bay_number: number | null;
+  started_at: string;
+  ended_at: string | null;
+  shot_count: number;
+  optix_booking_id: string;
+} } | null> {
+  const { data, error } = await sb
+    .from("sessions")
+    .select("id, bay_number, started_at, ended_at, shot_count, optix_booking_id")
+    .eq("player_id", playerId)
+    .eq("optix_booking_id", bookingId)
+    .order("started_at", { ascending: true });
+  if (error || !data || data.length === 0) return null;
+
+  const earliest = data[0];
+  const latest = data[data.length - 1];
+  // ended_at: keep null if any sub-session is still open; otherwise latest end.
+  const anyOpen = data.some((s) => s.ended_at === null);
+  return {
+    sessionIds: data.map((s) => s.id as string),
+    synthetic: {
+      id: earliest.id as string,
+      bay_number: earliest.bay_number as number | null,
+      started_at: earliest.started_at as string,
+      ended_at: anyOpen ? null : (latest.ended_at as string | null),
+      shot_count: data.reduce((sum, s) => sum + (s.shot_count ?? 0), 0),
+      optix_booking_id: bookingId,
+    },
+  };
+}
+
 async function getCanonicalSession(
   sb: SupabaseClient,
   optixUserId: string,
@@ -754,9 +836,11 @@ async function handleSession(
   sb: SupabaseClient,
   optixUserId: string,
   club: string,
+  bookingId: string | null = null,
 ): Promise<Response> {
-  const resolved = await getCanonicalSession(sb, optixUserId);
-  if (!resolved) {
+  // Resolve player up front — both modes need it.
+  const player = await lookupPlayer(sb, optixUserId);
+  if (!player) {
     return jsonResponse(
       req,
       emptySessionResponse(
@@ -768,42 +852,69 @@ async function handleSession(
     );
   }
 
-  const { player, session } = resolved;
-  if (!session) {
+  // Two modes:
+  //   - canonical: most recent open/closed session (default)
+  //   - booking-pinned: caller passed ?booking_id=<X> from the history list
+  let session: any | null = null;
+  let sessionIds: string[] = [];
+  let pinnedMode = false;
+  if (bookingId) {
+    const resolved = await getSessionsForBooking(sb, player.id, bookingId);
+    if (resolved) {
+      session = resolved.synthetic;
+      sessionIds = resolved.sessionIds;
+      pinnedMode = true;
+    }
+  } else {
+    const resolved = await getCanonicalSession(sb, optixUserId);
+    if (resolved?.session) {
+      session = resolved.session;
+      sessionIds = [resolved.session.id];
+    }
+  }
+
+  if (!session || sessionIds.length === 0) {
     return jsonResponse(
       req,
       emptySessionResponse(
         optixUserId,
         player.display_name ?? null,
         club,
-        "No sessions yet — your first booking will show up here.",
+        pinnedMode
+          ? "Couldn't find that session."
+          : "No sessions yet — your first booking will show up here.",
       ),
     );
   }
 
   const clubFilter = club === "all" ? null : club;
 
-  const shots = await shotsForSession(sb, session.id);
+  const shots = await shotsForSessionIds(sb, sessionIds);
   const agg = aggregateShots(shots, clubFilter);
   const byClub = byClubForShots(shots);
   const clubsUsed = Array.from(
     new Set(shots.map((s) => s.club).filter((c): c is string => !!c)),
   );
 
-  const prev = await previousSession(sb, player.id, session.started_at);
+  // Delta vs previous + sparkline only make sense in canonical mode. In
+  // pinned mode we're looking at a past booking — "previous" is ambiguous
+  // and a leading-window sparkline would mix this booking into itself.
   let prevAgg: SessionAggregateRow | null = null;
-  if (prev) {
-    const prevShots = await shotsForSession(sb, prev.id);
-    prevAgg = aggregateShots(prevShots, clubFilter);
+  let sparkline: number[] = [];
+  if (!pinnedMode) {
+    const prev = await previousSession(sb, player.id, session.started_at);
+    if (prev) {
+      const prevShots = await shotsForSession(sb, prev.id);
+      prevAgg = aggregateShots(prevShots, clubFilter);
+    }
+    sparkline = await sparklineMaxCarry(
+      sb,
+      player.id,
+      session.started_at,
+      clubFilter,
+      6,
+    );
   }
-
-  const sparkline = await sparklineMaxCarry(
-    sb,
-    player.id,
-    session.started_at,
-    clubFilter,
-    6,
-  );
 
   let fallback: string | null = null;
   const totalShots = agg.total_shots;
@@ -1145,6 +1256,7 @@ serve(async (req: Request) => {
     const url = new URL(req.url);
     const view = url.searchParams.get("view") ?? "session";
     const club = url.searchParams.get("club") ?? "all";
+    const bookingId = url.searchParams.get("booking_id");
 
     // Token comes from Authorization: Bearer <token> header only. The
     // `?user_id=` URL param is no longer required or trusted — see
@@ -1172,7 +1284,7 @@ serve(async (req: Request) => {
     });
 
     if (view === "session") {
-      return await handleSession(req, sb, verifiedUserId, club);
+      return await handleSession(req, sb, verifiedUserId, club, bookingId);
     }
     if (view === "history") {
       return await handleHistory(req, sb, verifiedUserId);

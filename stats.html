@@ -666,6 +666,9 @@
 
     <!-- ─── POPULATED: SESSION ─── -->
     <section id="view-session" class="view hidden" role="tabpanel" aria-labelledby="tab-session">
+      <button id="session-back" type="button" class="hidden" style="background:none;border:none;color:var(--cream);opacity:0.6;font-family:'Bai Jamjuree',sans-serif;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;padding:8px 0 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+        <span aria-hidden="true">←</span> back to history
+      </button>
       <div id="session-strip" class="session-strip"></div>
       <div id="session-chips" class="chip-row" role="group" aria-label="club filter"></div>
 
@@ -909,6 +912,12 @@ function isMockMode() {
   return !h || h === "localhost" || h === "127.0.0.1" || h.endsWith(".local") || h === "file";
 }
 
+// When set, the session view loads this specific Optix booking (via the
+// edge fn's ?booking_id= param) instead of the canonical most-recent
+// session. Set by tapping a history card, cleared by the back button or
+// any tab click.
+let _pinnedBookingId = null;
+
 // Temp diag: append resolved player info to the footer so we can see what
 // the edge fn looked up the token as, and whether a player row matched.
 function _appendDiagFromSessionData(data) {
@@ -939,6 +948,9 @@ async function fetchView(view, opts={}) {
   url.searchParams.set("view", view);
   if (opts.club) url.searchParams.set("club", opts.club);
   if (user_id) url.searchParams.set("user_id", user_id);
+  if (view === 'session' && _pinnedBookingId) {
+    url.searchParams.set("booking_id", _pinnedBookingId);
+  }
   const res = await fetch(url.toString(), {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
   });
@@ -1216,9 +1228,8 @@ function renderHero(s) {
     deltaEl.classList.add('hidden');
   }
 
-  // Subline — trust server total_carry; em-dash if null
-  const totalCarryDisp = totalCarry == null ? "—" : `${Math.round(totalCarry)} yds`;
-  $('#hero-subline').textContent = `total ${totalCarryDisp} · ${shotCount} shots`;
+  // Subline — sum of yardages is meaningless in golf, just show shot count
+  $('#hero-subline').textContent = `${shotCount} shots`;
 
   // Sparkline — only on "all"
   const spark = $('#hero-spark');
@@ -1253,7 +1264,7 @@ function renderStatGrid(s) {
 
   const cards = [
     {
-      eb: "BALL SPEED",
+      eb: "AVG BALL SPEED",
       num: st.ball_speed?.avg != null ? st.ball_speed.avg.toFixed(1) : "—",
       unit: "mph",
       deltaVal: st.ball_speed?.delta,
@@ -1261,7 +1272,7 @@ function renderStatGrid(s) {
       deltaUnit: " mph"
     },
     {
-      eb: "LAUNCH ANGLE",
+      eb: "AVG LAUNCH ANGLE",
       num: st.vla?.avg != null ? st.vla.avg.toFixed(1) : "—",
       unit: "deg",
       deltaVal: st.vla?.delta,
@@ -1269,7 +1280,7 @@ function renderStatGrid(s) {
       deltaUnit: "°"
     },
     {
-      eb: "SMASH FACTOR",
+      eb: "AVG SMASH FACTOR",
       num: st.smash?.avg != null ? st.smash.avg.toFixed(2) : "—",
       unit: "",
       deltaVal: st.smash?.delta,
@@ -1277,13 +1288,13 @@ function renderStatGrid(s) {
       deltaUnit: ""
     },
     {
-      eb: "CLUB PATH",
+      eb: "AVG CLUB PATH",
       num: st.club_path?.avg != null ? fmtSigned(st.club_path.avg, 1) : "—",
       unit: "deg",
       word: st.club_path?.word
     },
     {
-      eb: "FACE TO PATH",
+      eb: "AVG FACE TO PATH",
       num: st.face_to_path?.avg != null ? fmtSigned(st.face_to_path.avg, 1) : "—",
       unit: "deg",
       word: st.face_to_path?.word
@@ -1451,7 +1462,8 @@ function renderHistory(data) {
       renderSparkline(svg, s.sparkline, "var(--gold)");
     }
     card.addEventListener('click', () => {
-      console.log('[clubhouse:stats] history card tap', s.booking_id);
+      _pinnedBookingId = s.booking_id;
+      loadView('session');
     });
     // Item #3 — keyboard activation for role=button cards.
     card.addEventListener('keydown', (e) => {
@@ -1659,6 +1671,13 @@ async function loadView(name) {
   _currentView = name;
   syncTabState(name);
 
+  // Back-to-history link only relevant when the session view is pinned to
+  // a specific booking from the history list.
+  const backBtn = $('#session-back');
+  if (backBtn) {
+    backBtn.classList.toggle('hidden', !(name === 'session' && _pinnedBookingId));
+  }
+
   if (name === 'session') {
     _activeClubFilter = "all";
     return loadSession("all");
@@ -1685,8 +1704,22 @@ async function loadView(name) {
 
 // ── WIRING ───────────────────────────────────────────────────
 $$('.tab').forEach(t => {
-  t.addEventListener('click', () => loadView(t.dataset.view));
+  t.addEventListener('click', () => {
+    // Tab clicks always go to the canonical view of that tab — never
+    // continue showing a history-pinned past session.
+    _pinnedBookingId = null;
+    loadView(t.dataset.view);
+  });
 });
+
+// Back button on the session view: clear the pin, return to history list.
+const _backBtn = $('#session-back');
+if (_backBtn) {
+  _backBtn.addEventListener('click', () => {
+    _pinnedBookingId = null;
+    loadView('history');
+  });
+}
 
 // Item #2 — tab arrow-key navigation per WAI-ARIA APG.
 $('#tablist').addEventListener('keydown', (e) => {
