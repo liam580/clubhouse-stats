@@ -724,8 +724,6 @@
     </section>
   </main>
 
-<div id="diag-footer" style="text-align:center;font-size:10px;line-height:1.3;color:rgba(237,228,207,0.45);padding:8px 16px 24px;font-family:monospace;word-break:break-all;"></div>
-
 <script>
 /* ╔══════════════════════════════════════════════════════════╗
    ║ CLUBHOUSE · STATS v3                                      ║
@@ -754,21 +752,6 @@ function esc(s) {
 const _initialParams = new URLSearchParams(location.search);
 const _capturedToken = _initialParams.get("token") || "";
 const _capturedUserId = _initialParams.get("user_id") || "";
-// Temp diagnostic — show every URL param the canvas got, so we can see what
-// Optix is substituting into the macros without needing the URL bar.
-(function showDiagFooter() {
-  try {
-    const el = document.getElementById('diag-footer');
-    if (!el) return;
-    const bits = [];
-    for (const [k, v] of _initialParams.entries()) {
-      // Don't leak the bearer token, just show its length.
-      if (k === 'token') bits.push(`token=[${v.length} chars]`);
-      else bits.push(`${k}=${v}`);
-    }
-    el.textContent = `params · ${bits.length ? bits.join(' · ') : '(none)'}`;
-  } catch (_) { /* fail silent */ }
-})();
 (function stripTokenFromUrl() {
   if (!_initialParams.has("token")) return;
   try {
@@ -918,27 +901,10 @@ function isMockMode() {
 // any tab click.
 let _pinnedBookingId = null;
 
-// Temp diag: append resolved player info to the footer so we can see what
-// the edge fn looked up the token as, and whether a player row matched.
-function _appendDiagFromSessionData(data) {
-  try {
-    const el = document.getElementById('diag-footer');
-    if (!el || el.dataset.appended) return;
-    const resolved = data?.player?.optix_user_id ?? 'null';
-    const name = data?.player?.display_name ?? '(no player row matched)';
-    const hasSession = data?.session ? `session=${(data.session.id || '').slice(0,8) || '?'}` : 'no session';
-    const totalShots = data?.hero?.total_shots ?? 0;
-    el.textContent += ` · resolved=${resolved} (${name}) · ${hasSession} · ${totalShots} shots`;
-    el.dataset.appended = "1";
-  } catch (_) { /* fail silent */ }
-}
-
 async function fetchView(view, opts={}) {
   if (isMockMode()) {
     await new Promise(r => setTimeout(r, 220));
-    const data = __MOCK_DATA__[view] || null;
-    if (view === 'session') _appendDiagFromSessionData(data);
-    return data;
+    return __MOCK_DATA__[view] || null;
   }
   // Token was read once at boot from ?token= and stripped from the URL.
   // It is sent ONLY as an Authorization header — never echoed back into the query.
@@ -963,13 +929,9 @@ async function fetchView(view, opts={}) {
     err.status = res.status;
     err.errorCode = body?.error ?? null;
     err.reasonCode = body?.reason_code ?? null;
-    err.verifiedId = body?.verified_id ?? null;
-    err.claimedId  = body?.claimed_id  ?? null;
     throw err;
   }
-  const data = await res.json();
-  if (view === 'session') _appendDiagFromSessionData(data);
-  return data;
+  return res.json();
 }
 
 // ── HELPERS ──────────────────────────────────────────────────
@@ -1618,11 +1580,7 @@ function showError(err) {
     if (err?.status) bits.push(`http ${err.status}`);
     if (err?.errorCode) bits.push(err.errorCode);
     if (err?.reasonCode) bits.push(err.reasonCode);
-    let line = bits.length ? `(${bits.join(' · ')})` : '';
-    if (err?.verifiedId || err?.claimedId) {
-      line += ` got=${err.verifiedId ?? '?'} expected=${err.claimedId ?? '?'}`;
-    }
-    detailEl.textContent = line;
+    detailEl.textContent = bits.length ? `(${bits.join(' · ')})` : '';
   }
   showState('error');
 }
