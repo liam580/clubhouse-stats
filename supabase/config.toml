@@ -1,0 +1,10 @@
+# Supabase project config — only the bits that matter for the stats edge function live here.
+# (The rest of the project is configured via the dashboard.)
+
+[functions.stats]
+# This function does its own auth — it validates an Optix user token against
+# Optix's GraphQL `me` query and compares the resolved user_id to the ?user_id
+# query param. Optix tokens are NOT Supabase JWTs, so leaving Supabase's
+# gateway JWT verification on (the default) would 401 every member request
+# with UNAUTHORIZED_INVALID_JWT_FORMAT before our code runs.
+verify_jwt = false
