@@ -263,19 +263,19 @@ interface OptixMeResponse {
   errors?: unknown;
 }
 
-// Lightweight token check: confirm Optix accepts this bearer token (any
-// authenticated user) — but don't enforce that the token holder matches the
-// `?user_id=` from the canvas URL. Optix's macro substitution doesn't
-// reliably produce the viewer's id (it varies by canvas-context scope), so
-// we trust the URL's user_id at face value.
+// Resolve the canvas viewer's identity from the bearer token, not from the
+// URL. Optix's `{user_id}` URL macro isn't reliably substituted (we've seen
+// it pass through as the literal string "{user_id}"), so trusting the URL
+// param means the DB lookup whiffs every time. Calling Optix's `me` query
+// with the token returns the actual logged-in user's user_id — that's the
+// value the relay stores as `players.optix_user_id`, so the lookup hits.
 //
-// SECURITY: this means any holder of a valid Optix token can request stats
-// for any user_id. Acceptable for MVP because the canvas URL is only handed
-// out through the Optix app embed and the data is golf shot numbers, not
-// PII. Re-tighten once we know which Optix field maps to the canvas viewer.
+// This is also the v1 behavior: v1's README explicitly described "validates
+// the token server-side and returns the player's stats", which is what's
+// happening here.
 async function validateOptixToken(
   token: string,
-): Promise<{ ok: true } | { ok: false; reason: string }> {
+): Promise<{ ok: true; userId: string } | { ok: false; reason: string }> {
   // Item #14 — bound the call so a slow Optix doesn't hang every stats request.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), OPTIX_TIMEOUT_MS);
@@ -297,10 +297,11 @@ async function validateOptixToken(
     }
 
     const payload = (await res.json()) as OptixMeResponse;
-    if (!payload?.data?.me?.user?.user_id) {
+    const verifiedId = payload?.data?.me?.user?.user_id;
+    if (!verifiedId) {
       return { ok: false, reason: "no_user_id_in_optix_response" };
     }
-    return { ok: true };
+    return { ok: true, userId: String(verifiedId) };
   } catch (err) {
     if ((err as Error).name === "AbortError") {
       return { ok: false, reason: "optix_timeout" };
@@ -1103,16 +1104,17 @@ serve(async (req: Request) => {
   try {
     const url = new URL(req.url);
     const view = url.searchParams.get("view") ?? "session";
-    const userId = url.searchParams.get("user_id");
     const club = url.searchParams.get("club") ?? "all";
 
-    // Token comes from Authorization: Bearer <token> header only.
+    // Token comes from Authorization: Bearer <token> header only. The
+    // `?user_id=` URL param is no longer required or trusted — see
+    // validateOptixToken() comment for why.
     const authHeader = req.headers.get("Authorization") ?? req.headers.get("authorization") ?? "";
     const token = authHeader.toLowerCase().startsWith("bearer ")
       ? authHeader.slice(7).trim()
       : "";
 
-    if (!token || !userId) {
+    if (!token) {
       return errorResponse(req, 400, "missing_required_params");
     }
     if (!["session", "history", "trends"].includes(view)) {
@@ -1123,18 +1125,19 @@ serve(async (req: Request) => {
     if (!auth.ok) {
       return errorResponse(req, 401, "unauthorized", auth.reason);
     }
+    const verifiedUserId = auth.userId;
 
     const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
     if (view === "session") {
-      return await handleSession(req, sb, userId, club);
+      return await handleSession(req, sb, verifiedUserId, club);
     }
     if (view === "history") {
-      return await handleHistory(req, sb, userId);
+      return await handleHistory(req, sb, verifiedUserId);
     }
-    return await handleTrends(req, sb, userId, club);
+    return await handleTrends(req, sb, verifiedUserId, club);
   } catch (err) {
     return errorResponse(req, 500, "internal_error", (err as Error).message);
   }
