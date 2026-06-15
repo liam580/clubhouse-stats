@@ -158,15 +158,25 @@ type TrendsResponse = TrendsReadyResponse | TrendsNotReadyResponse;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const OPTIX_GRAPHQL_URL = "https://api.optixapp.com/graphql";
-const IS_PROD = (Deno.env.get("DENO_DEPLOYMENT_ID") ?? "") !== "" ||
-  (Deno.env.get("ENVIRONMENT") ?? "") === "production";
+// Item #8 — default closed. DENO_DEPLOYMENT_ID is not reliably populated on
+// Supabase Edge Functions, so falling back on it leaked raw error.message in
+// prod. Treat anything except an explicit `ENVIRONMENT=development` as prod.
+const IS_PROD = (Deno.env.get("ENVIRONMENT") ?? "production") !== "development";
 
-const ALLOWED_ORIGINS = new Set<string>([
-  "https://liam580.github.io",
-  "https://stats.clubhousegolf.nyc",
-  "http://localhost:8000",
-  "null",
-]);
+// Item #14 — cap the Optix token-validation call so a slow Optix can't pin a
+// stats request to the 60s function ceiling.
+const OPTIX_TIMEOUT_MS = 4000;
+
+// Item #15 — "null" origin is for file:// during local dev; never accept it
+// in production. Build the allowlist conditionally on IS_PROD.
+const ALLOWED_ORIGINS = new Set<string>(
+  [
+    "https://liam580.github.io",
+    "https://stats.clubhousegolf.nyc",
+    "http://localhost:8000",
+    !IS_PROD ? "null" : null,
+  ].filter((s): s is string => s !== null),
+);
 
 function corsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get("Origin") ?? "";
@@ -212,7 +222,12 @@ interface OptixMeResponse {
     me?: {
       user?: {
         user_id?: string;
-        display_name?: string | null;
+        // Optix's User type exposes `fullname` — NOT `display_name`.
+        // Confirmed via schema introspection 2026-06-15: querying
+        // display_name returns a top-level GraphQL error, the whole
+        // request fails, and our extraction returns undefined → 401 →
+        // blank canvas. Stick to fullname.
+        fullname?: string | null;
       };
     };
   };
@@ -223,6 +238,9 @@ async function validateOptixToken(
   token: string,
   claimedUserId: string,
 ): Promise<{ ok: true; userId: string; displayName: string | null } | { ok: false; reason: string }> {
+  // Item #14 — bound the call so a slow Optix doesn't hang every stats request.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OPTIX_TIMEOUT_MS);
   try {
     const res = await fetch(OPTIX_GRAPHQL_URL, {
       method: "POST",
@@ -231,8 +249,9 @@ async function validateOptixToken(
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        query: "query { me { user { user_id display_name } } }",
+        query: "query { me { user { user_id fullname } } }",
       }),
+      signal: controller.signal,
     });
 
     if (!res.ok) {
@@ -241,7 +260,7 @@ async function validateOptixToken(
 
     const payload = (await res.json()) as OptixMeResponse;
     const verifiedId = payload?.data?.me?.user?.user_id;
-    const displayName = payload?.data?.me?.user?.display_name ?? null;
+    const displayName = payload?.data?.me?.user?.fullname ?? null;
 
     if (!verifiedId) {
       return { ok: false, reason: "no_user_id_in_optix_response" };
@@ -251,7 +270,12 @@ async function validateOptixToken(
     }
     return { ok: true, userId: String(verifiedId), displayName };
   } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      return { ok: false, reason: "optix_timeout" };
+    }
     return { ok: false, reason: `optix_fetch_failed:${(err as Error).message}` };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -375,7 +399,15 @@ function aggregateShots(
     ? shots.filter((s) => s.club === clubFilter)
     : shots;
 
+  // Item #10 — best_carry and longest_club must derive from the SAME shot set,
+  // otherwise the hero can claim "best carry 250 yds" while the takeaway shows
+  // "longest 230 yds". The takeaway search excludes null-club shots, so we
+  // mirror that filter for the hero best-carry derivation. The session-level
+  // total_carry / total_shots still come from ALL filtered shots.
+  const namedClubShots = filtered.filter((s) => s.club != null);
+
   const carryVals = filtered.map((s) => s.carry_distance).filter((v): v is number => v != null);
+  const namedCarryVals = namedClubShots.map((s) => s.carry_distance).filter((v): v is number => v != null);
   const ballSpeedVals = filtered.map((s) => s.ball_speed).filter((v): v is number => v != null);
   const vlaVals = filtered.map((s) => s.vla).filter((v): v is number => v != null);
   const smashVals = filtered.map((s) => s.smash).filter((v): v is number => v != null);
@@ -384,27 +416,31 @@ function aggregateShots(
     .map((s) => (s.face_to_path != null ? s.face_to_path : (s.face_to_target != null && s.club_path != null ? s.face_to_target - s.club_path : null)))
     .filter((v): v is number => v != null);
 
-  const bestCarry = maxOrNull(carryVals);
+  // Hero best_carry is the max over NAMED clubs only — same shot set used to
+  // pick longest_club below, so the two can never disagree.
+  const bestCarry = maxOrNull(namedCarryVals);
   let bestCarryClub: string | null = null;
   let bestSeen = -Infinity;
-  for (const s of filtered) {
+  for (const s of namedClubShots) {
     if (s.carry_distance != null && s.carry_distance > bestSeen) {
       bestSeen = s.carry_distance;
       bestCarryClub = s.club ?? null;
     }
   }
 
-  // Peak smash + club
+  // Peak smash + club (named clubs only, same rationale)
   let peakSmash: number | null = null;
   let peakSmashClub: string | null = null;
   let peakSeen = -Infinity;
-  for (const s of filtered) {
+  for (const s of namedClubShots) {
     if (s.smash != null && s.smash > peakSeen) {
       peakSeen = s.smash;
       peakSmash = s.smash;
       peakSmashClub = s.club ?? null;
     }
   }
+  // Silence the unused-var linter for carryVals: kept for total_carry below.
+  void carryVals;
 
   // Per-club rollup (for longest / most-hit)
   const byClub = new Map<string, {
