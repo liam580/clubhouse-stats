@@ -78,6 +78,11 @@ interface ByClubRow {
   face_avg: number | null;
 }
 
+interface TakeawayLine {
+  club: string;        // club code (e.g., "IRON7"); canvas formats display name
+  text: string;        // pre-formatted; "{club}" placeholder for client-side label substitution
+}
+
 interface TakeawayBlock {
   peak_smash: number | null;
   peak_smash_club: string | null;
@@ -87,6 +92,11 @@ interface TakeawayBlock {
   longest_club_face_word: string | null;
   most_hit_club: string | null;
   most_hit_shots: number | null;
+  // Physics-based observations. Both nullable — when no club has 5+ shots,
+  // or when no candidate observation crosses its trigger threshold, the
+  // corresponding line is omitted entirely (no forced compliment / nag).
+  strength: TakeawayLine | null;
+  watch: TakeawayLine | null;
   fallback_text: string | null;   // shown when we don't have enough data
 }
 
@@ -372,6 +382,251 @@ function sumOrNull(xs: number[]): number | null {
   return s;
 }
 
+function stdDev(xs: number[]): number | null {
+  if (xs.length < 2) return null;
+  const m = mean(xs)!;
+  let sq = 0;
+  for (const v of xs) sq += (v - m) * (v - m);
+  return Math.sqrt(sq / xs.length);
+}
+
+function signedFixed(n: number, digits: number): string {
+  const s = n.toFixed(digits);
+  return n > 0 ? `+${s}` : s;
+}
+
+// ---------------------------------------------------------------------------
+// Per-club benchmarks + STRENGTH/WATCH observation picker
+//
+// Benchmarks are population averages cited across launch-monitor / instruction
+// literature (smash factor windows, optimal launch/spin windows, attack-angle
+// direction). They are NOT player-specific — they describe what physics
+// rewards on average. We use them only to make objective "in/out of window"
+// claims, never to characterize a player's swing or shape.
+// ---------------------------------------------------------------------------
+
+interface ClubBench {
+  smash: [number, number];    // efficiency window
+  launch: [number, number];   // vertical launch angle window (degrees)
+  attack: [number, number];   // attack angle window (degrees; sign matters)
+}
+
+function clubBenchmark(club: string | null): ClubBench | null {
+  if (!club) return null;
+  const c = club.toUpperCase();
+  if (c === "DRIVER") return { smash: [1.46, 1.50], launch: [12, 17], attack: [2, 5] };
+  if (c.startsWith("WOOD")) return { smash: [1.44, 1.48], launch: [11, 15], attack: [-1, 2] };
+  if (c.startsWith("HYBRID") || c === "IRON3" || c === "IRON4" || c === "IRON5") {
+    return { smash: [1.40, 1.44], launch: [16, 21], attack: [-4, -2] };
+  }
+  if (c === "IRON6" || c === "IRON7" || c === "IRON8") {
+    return { smash: [1.36, 1.40], launch: [18, 23], attack: [-5, -3] };
+  }
+  if (c === "IRON9" || c === "PW") {
+    return { smash: [1.30, 1.36], launch: [24, 30], attack: [-6, -4] };
+  }
+  if (c === "GW" || c === "SW" || c === "LW" || c === "WEDGE") {
+    return { smash: [1.20, 1.28], launch: [28, 34], attack: [-8, -5] };
+  }
+  return null;
+}
+
+interface PerClubAgg {
+  club: string;
+  shots: number;
+  avgSmash: number | null;
+  avgLaunch: number | null;
+  avgAttack: number | null;
+  ballSpeedStdDev: number | null;
+  carryStdDev: number | null;
+}
+
+function aggregatePerClub(shots: ShotRow[]): PerClubAgg[] {
+  const groups = new Map<string, ShotRow[]>();
+  for (const s of shots) {
+    if (!s.club) continue;
+    const list = groups.get(s.club) ?? [];
+    list.push(s);
+    groups.set(s.club, list);
+  }
+  const out: PerClubAgg[] = [];
+  for (const [club, list] of groups) {
+    const smashes = list.map((s) => s.smash).filter((v): v is number => v != null);
+    const launches = list.map((s) => s.vla).filter((v): v is number => v != null);
+    const attacks = list.map((s) => s.attack_angle).filter((v): v is number => v != null);
+    const speeds = list.map((s) => s.ball_speed).filter((v): v is number => v != null);
+    const carries = list.map((s) => s.carry_distance).filter((v): v is number => v != null);
+    out.push({
+      club,
+      shots: list.length,
+      avgSmash: mean(smashes),
+      avgLaunch: mean(launches),
+      avgAttack: mean(attacks),
+      ballSpeedStdDev: stdDev(speeds),
+      carryStdDev: stdDev(carries),
+    });
+  }
+  return out;
+}
+
+type Candidate = {
+  kind: "strength" | "watch";
+  club: string;
+  text: string;     // "{club}" gets replaced client-side with the readable club label
+  score: number;   // higher = more notable; used to pick top STRENGTH and top WATCH
+};
+
+function generateCandidates(agg: PerClubAgg, bench: ClubBench): Candidate[] {
+  const out: Candidate[] = [];
+  const c = agg.club;
+  const n = agg.shots;
+
+  // ===== STRENGTH candidates =====================================
+
+  // Smash inside window — score by closeness to upper bound (i.e. "tour" end)
+  if (agg.avgSmash != null) {
+    const [lo, hi] = bench.smash;
+    if (agg.avgSmash >= lo) {
+      const inWindow = Math.min(agg.avgSmash, hi);
+      const proximity = (inWindow - lo) / Math.max(0.001, hi - lo); // 0–1
+      out.push({
+        kind: "strength",
+        club: c,
+        text: `{club} smash factor ${agg.avgSmash.toFixed(2)} across ${n} shots — in the ${lo.toFixed(2)}–${hi.toFixed(2)} benchmark.`,
+        score: 0.70 + proximity * 0.30,
+      });
+    }
+  }
+
+  // Attack angle in correct direction & inside window
+  if (agg.avgAttack != null) {
+    const [lo, hi] = bench.attack;
+    if (agg.avgAttack >= lo && agg.avgAttack <= hi) {
+      out.push({
+        kind: "strength",
+        club: c,
+        text: `{club} attack angle ${signedFixed(agg.avgAttack, 1)}° avg across ${n} shots — in the ${signedFixed(lo, 0)} to ${signedFixed(hi, 0)}° window.`,
+        score: 0.65,
+      });
+    }
+  }
+
+  // Launch angle inside window
+  if (agg.avgLaunch != null) {
+    const [lo, hi] = bench.launch;
+    if (agg.avgLaunch >= lo && agg.avgLaunch <= hi) {
+      const center = (lo + hi) / 2;
+      const halfWidth = Math.max(0.001, (hi - lo) / 2);
+      const proximity = 1 - Math.abs(agg.avgLaunch - center) / halfWidth;
+      out.push({
+        kind: "strength",
+        club: c,
+        text: `{club} launched ${agg.avgLaunch.toFixed(1)}° avg across ${n} shots — in the ${lo}–${hi}° window.`,
+        score: 0.55 + proximity * 0.20,
+      });
+    }
+  }
+
+  // Repeatable ball speed (≥5 shots, std dev < 2 mph)
+  if (agg.ballSpeedStdDev != null && n >= 5 && agg.ballSpeedStdDev < 2.0) {
+    out.push({
+      kind: "strength",
+      club: c,
+      text: `{club} ball speed varied ±${agg.ballSpeedStdDev.toFixed(1)} mph across ${n} shots — repeatable contact.`,
+      score: 0.80 - (agg.ballSpeedStdDev / 2.0) * 0.20,
+    });
+  }
+
+  // ===== WATCH candidates ========================================
+
+  // Wrong-direction attack angle: club expects positive but result is negative
+  // (or expects negative but result is positive). Deterministic geometry.
+  if (agg.avgAttack != null) {
+    const [aLo, aHi] = bench.attack;
+    if (aLo >= 0 && agg.avgAttack < 0) {
+      out.push({
+        kind: "watch",
+        club: c,
+        text: `{club} attack angle ${signedFixed(agg.avgAttack, 1)}° avg across ${n} shots — hitting down on a club that benefits from an upward strike.`,
+        score: 1.0,
+      });
+    } else if (aHi <= 0 && agg.avgAttack > 0) {
+      out.push({
+        kind: "watch",
+        club: c,
+        text: `{club} attack angle ${signedFixed(agg.avgAttack, 1)}° avg across ${n} shots — hitting up on a club that benefits from a downward strike.`,
+        score: 1.0,
+      });
+    }
+  }
+
+  // Smash >0.10 below window low
+  if (agg.avgSmash != null) {
+    const [lo, hi] = bench.smash;
+    const gap = lo - agg.avgSmash;
+    if (gap > 0.10) {
+      out.push({
+        kind: "watch",
+        club: c,
+        text: `{club} smash factor ${agg.avgSmash.toFixed(2)} across ${n} shots — well below the ${lo.toFixed(2)}–${hi.toFixed(2)} benchmark.`,
+        score: 0.70 + Math.min(0.30, gap),
+      });
+    }
+  }
+
+  // Launch >5° outside window
+  if (agg.avgLaunch != null) {
+    const [lo, hi] = bench.launch;
+    if (agg.avgLaunch < lo - 5) {
+      out.push({
+        kind: "watch",
+        club: c,
+        text: `{club} launched ${agg.avgLaunch.toFixed(1)}° avg across ${n} shots — well below the ${lo}–${hi}° window.`,
+        score: 0.80,
+      });
+    } else if (agg.avgLaunch > hi + 5) {
+      out.push({
+        kind: "watch",
+        club: c,
+        text: `{club} launched ${agg.avgLaunch.toFixed(1)}° avg across ${n} shots — well above the ${lo}–${hi}° window.`,
+        score: 0.80,
+      });
+    }
+  }
+
+  // High carry dispersion (≥5 shots, std dev > 15 yds)
+  if (agg.carryStdDev != null && n >= 5 && agg.carryStdDev > 15) {
+    out.push({
+      kind: "watch",
+      club: c,
+      text: `{club} carry varied ±${agg.carryStdDev.toFixed(0)} yds across ${n} shots — inconsistent contact-to-contact.`,
+      score: 0.60 + Math.min(0.30, (agg.carryStdDev - 15) / 30),
+    });
+  }
+
+  return out;
+}
+
+function pickTakeawayObservations(shots: ShotRow[]): {
+  strength: TakeawayLine | null;
+  watch: TakeawayLine | null;
+} {
+  const aggs = aggregatePerClub(shots);
+  const all: Candidate[] = [];
+  for (const agg of aggs) {
+    if (agg.shots < 5) continue; // need ≥5 same-club shots for any observation
+    const bench = clubBenchmark(agg.club);
+    if (!bench) continue;
+    all.push(...generateCandidates(agg, bench));
+  }
+  const strengths = all.filter((c) => c.kind === "strength").sort((a, b) => b.score - a.score);
+  const watches = all.filter((c) => c.kind === "watch").sort((a, b) => b.score - a.score);
+  return {
+    strength: strengths[0] ? { club: strengths[0].club, text: strengths[0].text } : null,
+    watch: watches[0] ? { club: watches[0].club, text: watches[0].text } : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Raw shot row + inline aggregation
 // ---------------------------------------------------------------------------
@@ -382,6 +637,7 @@ interface ShotRow {
   ball_speed: number | null;
   vla: number | null;
   smash: number | null;
+  attack_angle: number | null;
   club_path: number | null;
   face_to_target: number | null;
   face_to_path: number | null;
@@ -398,7 +654,7 @@ async function shotsForSessionIds(
   const { data, error } = await sb
     .from("shots")
     .select(
-      "club, carry_distance, ball_speed, vla, club_speed, face_to_target, path, recorded_at",
+      "club, carry_distance, ball_speed, vla, club_speed, attack_angle, face_to_target, path, recorded_at",
     )
     .in("session_id", sessionIds);
   if (error) {
@@ -418,6 +674,7 @@ async function shotsForSessionIds(
       smash: ballSpeed != null && clubSpeed != null && clubSpeed > 0
         ? ballSpeed / clubSpeed
         : null,
+      attack_angle: (r.attack_angle as number | null) ?? null,
       club_path: path ?? null,
       face_to_target: faceToTarget ?? null,
       face_to_path: faceToTarget != null && path != null
@@ -440,7 +697,7 @@ async function shotsForSession(
   const { data, error } = await sb
     .from("shots")
     .select(
-      "club, carry_distance, ball_speed, vla, club_speed, face_to_target, path, recorded_at",
+      "club, carry_distance, ball_speed, vla, club_speed, attack_angle, face_to_target, path, recorded_at",
     )
     .eq("session_id", sessionId);
   if (error) {
@@ -460,6 +717,7 @@ async function shotsForSession(
       smash: ballSpeed != null && clubSpeed != null && clubSpeed > 0
         ? ballSpeed / clubSpeed
         : null,
+      attack_angle: (r.attack_angle as number | null) ?? null,
       club_path: path ?? null,
       face_to_target: faceToTarget ?? null,
       face_to_path: faceToTarget != null && path != null
@@ -826,6 +1084,8 @@ function emptySessionResponse(
       longest_club_face_word: null,
       most_hit_club: null,
       most_hit_shots: null,
+      strength: null,
+      watch: null,
       fallback_text: fallback,
     },
   };
@@ -924,6 +1184,10 @@ async function handleSession(
     fallback = "Not enough club data to surface a takeaway yet.";
   }
 
+  // Physics-based observations. Each requires ≥5 same-club shots, so this
+  // returns nulls for low-data sessions; the canvas hides empty rows.
+  const observations = pickTakeawayObservations(shots);
+
   const response: SessionResponse = {
     player: {
       display_name: player.display_name ?? null,
@@ -981,6 +1245,8 @@ async function handleSession(
       longest_club_face_word: faceToPathWord(agg.longest_club_avg_face),
       most_hit_club: agg.most_hit_club,
       most_hit_shots: agg.most_hit_shots,
+      strength: observations.strength,
+      watch: observations.watch,
       fallback_text: fallback,
     },
   };

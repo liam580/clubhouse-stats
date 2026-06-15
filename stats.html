@@ -452,6 +452,27 @@
     line-height: 1.65;
     color: var(--cream);
   }
+  .takeaway-row {
+    margin-top: 14px;
+  }
+  .takeaway-row + .takeaway-row {
+    margin-top: 12px;
+  }
+  .takeaway-row-eb {
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-weight: 600;
+    font-size: 10px;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .takeaway-row-eb-strength { color: var(--blue); }
+  .takeaway-row-eb-watch    { color: var(--maroon2); }
+  .takeaway-row-body {
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--cream);
+  }
   .accent-blue {
     color: var(--blue);
     font-style: italic;
@@ -698,7 +719,15 @@
 
       <article class="card maroon-edge" id="takeaway-card">
         <div class="takeaway-eb"><span class="star">✦</span> SESSION TAKEAWAY</div>
-        <p class="takeaway-body" id="takeaway-body"></p>
+        <p class="takeaway-body hidden" id="takeaway-body"></p>
+        <div class="takeaway-row hidden" id="takeaway-strength-row">
+          <div class="takeaway-row-eb takeaway-row-eb-strength">STRENGTH</div>
+          <p class="takeaway-row-body" id="takeaway-strength-body"></p>
+        </div>
+        <div class="takeaway-row hidden" id="takeaway-watch-row">
+          <div class="takeaway-row-eb takeaway-row-eb-watch">WATCH</div>
+          <p class="takeaway-row-body" id="takeaway-watch-body"></p>
+        </div>
       </article>
     </section>
 
@@ -821,6 +850,14 @@ const __MOCK_DATA__ = (() => {
         longest_club_face_word: "closed",
         most_hit_club: "IRON7",
         most_hit_shots: 17,
+        strength: {
+          club: "DRIVER",
+          text: "{club} smash factor 1.49 across 12 shots — in the 1.46–1.50 benchmark."
+        },
+        watch: {
+          club: "IRON7",
+          text: "{club} carry varied ±18 yds across 17 shots — inconsistent contact-to-contact."
+        },
         fallback_text: null
       }
     },
@@ -1338,10 +1375,49 @@ function renderClubRows(s) {
 }
 
 function renderTakeaway(s) {
-  const body = $('#takeaway-body');
   const tk = s.takeaway || {};
-  const fragments = [];
+  const body = $('#takeaway-body');
+  const strengthRow = $('#takeaway-strength-row');
+  const watchRow = $('#takeaway-watch-row');
 
+  // Server returns pre-formatted text with a {club} placeholder so the
+  // canvas can substitute the readable label (e.g. "IRON7" → "7 iron").
+  const formatLine = (line) => {
+    if (!line || !line.text) return null;
+    const label = line.club ? clubLabel(line.club) : "";
+    return line.text.replace(/\{club\}/g, esc(label));
+  };
+
+  const strengthText = formatLine(tk.strength);
+  const watchText = formatLine(tk.watch);
+
+  // Show whichever observations the server surfaced; if neither, fall back
+  // to the legacy single-line summary (peak smash, etc.) for low-data sessions.
+  if (strengthText || watchText) {
+    body.classList.add('hidden');
+    if (strengthText) {
+      $('#takeaway-strength-body').innerHTML = strengthText;
+      strengthRow.classList.remove('hidden');
+    } else {
+      strengthRow.classList.add('hidden');
+    }
+    if (watchText) {
+      $('#takeaway-watch-body').innerHTML = watchText;
+      watchRow.classList.remove('hidden');
+    } else {
+      watchRow.classList.add('hidden');
+    }
+    return;
+  }
+
+  // No observations crossed a threshold — fall back to the older single-line
+  // summary. This covers sessions with <5 same-club shots or middling data
+  // that didn't trip any STRENGTH/WATCH trigger.
+  strengthRow.classList.add('hidden');
+  watchRow.classList.add('hidden');
+  body.classList.remove('hidden');
+
+  const fragments = [];
   if (tk.peak_smash != null && tk.peak_smash_club) {
     fragments.push(`Peak smash <span class="accent-blue">${tk.peak_smash.toFixed(2)}</span> with ${esc(clubLabel(tk.peak_smash_club))}.`);
   }
