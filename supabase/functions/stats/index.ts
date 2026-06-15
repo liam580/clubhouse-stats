@@ -617,10 +617,14 @@ async function getCanonicalSession(
 
   if (openRow) return { player, session: openRow };
 
+  // Closed-session fallback. Require shot_count > 0 so we skip sessions
+  // whose shots got cleaned up in DB maintenance — those would otherwise
+  // render an "empty session" card with no actual shots behind it.
   const { data: lastRow } = await sb
     .from("sessions")
     .select("id, player_id, bay_number, optix_booking_id, started_at, ended_at, shot_count")
     .eq("player_id", player.id)
+    .gt("shot_count", 0)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
