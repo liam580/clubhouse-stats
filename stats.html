@@ -1,432 +1,1497 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>your stats — clubhouse</title>
-
-<!--
-  This canvas is loaded inside the Clubhouse Optix mobile app via a URL like:
-  https://<host>/stats.html?token={token}&user_id={user_id}&member_id={member_id}
-
-  Optix replaces the macros with the logged-in member's session token + IDs.
-  The page calls the Supabase Edge Function `/stats`, which validates the
-  token server-side and returns the player's career + session stats. The
-  service_role key is never exposed to the browser.
-
-  TUSKER GROTESK + ITC AVANT GARDE are proprietary fonts. To match the rest
-  of Clubhouse's site copy the @font-face data:font blocks from
-  ../camp-flyer.html (or junior-camp-v2.html) into the <style> below where
-  marked. Until then the fallbacks (Anton + system) keep things on-brand-ish.
--->
-
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Bai+Jamjuree:wght@300;400;600&display=swap" rel="stylesheet">
-
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#0d2618" />
+<title>stats · clubhouse</title>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Bai+Jamjuree:wght@300;400;600&display=swap" rel="stylesheet" />
 <style>
-  /* ── PASTE @font-face BLOCKS FOR TUSKER GROTESK + ITC AVANT GARDE HERE ─── */
-
   :root {
     --green:  #0d2618;
     --green2: #14331f;
+    --green3: #1a3d27;
     --cream:  #ede4cf;
     --cream2: #f3ecda;
     --maroon: #5b1d1d;
+    --maroon2:#7a2727;
     --blue:   #b6d3df;
-
-    --f-display: 'Tusker Grotesk', 'Anton', 'Impact', system-ui, sans-serif;
-    --f-eyebrow: 'ITC Avant Garde', 'Bai Jamjuree', system-ui, sans-serif;
-    --f-body:    'Bai Jamjuree', system-ui, sans-serif;
+    --gold:   #c69248;
+    --thin:   rgba(237,228,207,0.08);
+    --thin2:  rgba(237,228,207,0.18);
+    --dim:    rgba(237,228,207,0.55);
+    --dim2:   rgba(237,228,207,0.35);
   }
 
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { background: var(--green); color: var(--cream); font-family: var(--f-body); }
-  body {
-    min-height: 100vh;
-    padding: 24px 20px 80px;
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--green);
+    color: var(--cream);
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
     font-weight: 300;
     line-height: 1.65;
-    font-size: 15px;
-    background-image:
-      repeating-linear-gradient(0deg,
-        rgba(237, 228, 207, 0.04) 0,
-        rgba(237, 228, 207, 0.04) 1px,
-        transparent 1px,
-        transparent 40px),
-      repeating-linear-gradient(90deg,
-        rgba(237, 228, 207, 0.04) 0,
-        rgba(237, 228, 207, 0.04) 1px,
-        transparent 1px,
-        transparent 40px);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
   }
-  .wrap { max-width: 720px; margin: 0 auto; }
-  .eyebrow {
-    font-family: var(--f-eyebrow);
+  body {
+    min-height: 100vh;
+    background-image:
+      repeating-linear-gradient(0deg, rgba(237,228,207,0.04) 0 1px, transparent 1px 40px),
+      repeating-linear-gradient(90deg, rgba(237,228,207,0.04) 0 1px, transparent 1px 40px);
+    background-attachment: fixed;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  .canvas {
+    max-width: 460px;
+    margin: 0 auto;
+    padding: 20px 18px 80px;
+  }
+
+  /* ── HEADER ──────────────────────────────────────────────── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+  }
+  .title {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 36px;
+    letter-spacing: -1.5px;
+    line-height: 0.95;
+    color: var(--cream);
+    margin: 0;
+  }
+  .icon-btn {
+    width: 36px; height: 36px;
+    min-width: 36px;
+    border-radius: 999px;
+    border: 1px solid var(--thin2);
+    background: transparent;
+    color: var(--cream);
+    display: grid; place-items: center;
+    cursor: pointer;
+  }
+  .icon-btn svg { width: 14px; height: 14px; }
+
+  /* ── TAB BAR ─────────────────────────────────────────────── */
+  .tabs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    padding: 4px;
+    border-radius: 999px;
+    border: 1px solid var(--thin2);
+    margin-bottom: 18px;
+  }
+  .tab {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--cream);
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
     font-weight: 400;
-    font-size: 9px;
+    font-size: 11px;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    padding: 12px 8px;
+    min-height: 44px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 120ms ease;
+  }
+  .tab[aria-selected="true"] {
+    background: var(--maroon);
+    color: var(--cream2);
+  }
+
+  /* ── EYEBROW + DIVIDER ───────────────────────────────────── */
+  .eyebrow {
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 10px;
     letter-spacing: 2.8px;
     text-transform: uppercase;
     color: var(--maroon);
-    margin-bottom: 6px;
+    margin: 0 0 10px;
   }
-  .eyebrow.cream { color: var(--cream); opacity: 0.55; }
+  .eyebrow.dim { color: var(--dim); }
+  .divider {
+    height: 1px;
+    background: rgba(237,228,207,0.10);
+    margin: 22px 0;
+  }
 
-  /* ── header ─────────────────────────────────────────────────────────── */
+  /* ── SESSION STRIP ───────────────────────────────────────── */
+  .session-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--dim);
+    margin-bottom: 16px;
+    line-height: 1.4;
+  }
+  .live-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--blue);
+    box-shadow: 0 0 0 0 var(--blue);
+    animation: pulse 1.8s ease-in-out infinite;
+    flex: 0 0 auto;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.5; box-shadow: 0 0 0 0 rgba(182,211,223,0.5); }
+    50%      { opacity: 1;   box-shadow: 0 0 0 6px rgba(182,211,223,0); }
+  }
+  .strip-text { color: var(--cream2); }
+  .strip-sep  { opacity: 0.5; }
 
-  header { padding-bottom: 28px; }
-  header h1 {
-    font-family: var(--f-display);
-    font-weight: 600;
-    font-size: clamp(40px, 11vw, 64px);
+  /* ── CHIPS ───────────────────────────────────────────────── */
+  .chip-row {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    margin: 0 -18px 18px;
+    padding: 0 18px 6px;
+    scrollbar-width: none;
+  }
+  .chip-row::-webkit-scrollbar { display: none; }
+  .chip {
+    appearance: none;
+    background: transparent;
+    color: var(--cream);
+    border: 1px solid var(--thin2);
+    border-radius: 999px;
+    padding: 9px 14px;
+    min-height: 36px;
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 11px;
+    letter-spacing: 1.8px;
     text-transform: uppercase;
+    white-space: nowrap;
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+  .chip[aria-pressed="true"] {
+    background: var(--maroon);
+    border-color: var(--maroon);
+    color: var(--cream2);
+  }
+  .chip.unknown {
+    border-style: dashed;
+    font-style: italic;
+    letter-spacing: 1.8px;
+  }
+
+  /* ── CARDS ───────────────────────────────────────────────── */
+  .card {
+    background: var(--green2);
+    border: 1px solid var(--thin);
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 14px;
+  }
+  .card.maroon-edge {
+    border: 1px solid var(--maroon2);
+  }
+
+  /* ── HERO CARD ───────────────────────────────────────────── */
+  .hero {
+    padding: 20px;
+  }
+  .hero-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .delta-pill {
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 10px;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--thin2);
+    color: var(--dim);
+    white-space: nowrap;
+  }
+  .delta-pill.up   { color: var(--gold); border-color: rgba(198,146,72,0.45); }
+  .delta-pill.down { color: var(--cream); border-color: var(--thin2); }
+  .hero-numrow {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 14px;
+  }
+  .hero-num {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 64px;
     letter-spacing: -1.5px;
     line-height: 0.95;
+    color: var(--cream2);
+  }
+  @media (max-width: 380px) { .hero-num { font-size: 54px; } }
+  .hero-unit {
+    display: block;
     margin-top: 4px;
-  }
-  header h1 em {
-    font-style: italic;
-    color: var(--blue);
-    font-weight: 600;
-  }
-  .name {
-    font-family: var(--f-eyebrow);
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
     font-weight: 400;
-    font-size: 13px;
-    letter-spacing: 1.5px;
+    font-size: 11px;
+    letter-spacing: 2.5px;
+    color: var(--dim);
     text-transform: uppercase;
-    margin-top: 14px;
-    opacity: 0.7;
   }
-
-  hr.div {
-    border: none;
-    height: 1px;
-    background: var(--cream);
-    opacity: 0.10;
-    margin: 24px 0;
+  .hero-sparkline {
+    flex: 0 0 auto;
+    margin-bottom: 6px;
   }
+  .hero-subline {
+    margin-top: 12px;
+    font-size: 12px;
+    letter-spacing: 1.4px;
+    color: var(--dim);
+    text-transform: uppercase;
+  }
+  .hero-para {
+    margin: 14px 0 0;
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--cream);
+  }
+  .hero-para .accent { color: var(--cream2); font-weight: 400; }
 
-  /* ── stat grid ──────────────────────────────────────────────────────── */
-
-  section { margin-top: 32px; }
-  section > .eyebrow { margin-bottom: 12px; }
-
+  /* ── STAT GRID ───────────────────────────────────────────── */
   .stat-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 14px 18px;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 18px;
   }
-  @media (min-width: 540px) { .stat-grid { grid-template-columns: repeat(3, 1fr); } }
-
-  .stat {
+  @media (max-width: 360px) { .stat-grid { grid-template-columns: 1fr; } }
+  .stat-card {
     background: var(--green2);
-    border-radius: 12px;
-    padding: 16px 16px 18px;
+    border: 1px solid var(--thin);
+    border-radius: 14px;
+    padding: 14px;
+    min-height: 110px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
-  .stat .label {
-    font-family: var(--f-eyebrow);
+  .stat-eyebrow {
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
     font-weight: 400;
     font-size: 9px;
+    letter-spacing: 2.4px;
+    text-transform: uppercase;
+    color: var(--maroon);
+  }
+  .stat-numwrap {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .stat-num {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 36px;
+    letter-spacing: -1px;
+    line-height: 0.95;
+    color: var(--cream2);
+  }
+  .stat-unit {
+    font-size: 11px;
+    letter-spacing: 1.6px;
+    color: var(--dim);
+    text-transform: uppercase;
+  }
+  .stat-word {
+    font-size: 12px;
+    letter-spacing: 1.6px;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-top: 2px;
+  }
+  .stat-delta {
+    margin-top: auto;
+    font-size: 10px;
+    letter-spacing: 1.4px;
+    color: var(--dim);
+    text-transform: uppercase;
+  }
+  .stat-delta.up { color: var(--gold); }
+
+  /* ── PER-CLUB ROWS ───────────────────────────────────────── */
+  .section-title {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 20px;
+    letter-spacing: -0.5px;
+    line-height: 1;
+    margin: 0 0 14px;
+    color: var(--cream2);
+  }
+  .club-row {
+    display: block;
+    background: transparent;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--thin);
+    cursor: pointer;
+    min-height: 44px;
+  }
+  .club-row:last-child { border-bottom: none; }
+  .club-row-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .club-tag {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: -0.3px;
+    color: var(--gold);
+    text-transform: uppercase;
+    flex: 0 0 auto;
+    min-width: 28px;
+  }
+  .club-name {
+    font-size: 14px;
+    color: var(--cream);
+    flex: 1 1 auto;
+    text-transform: lowercase;
+  }
+  .club-carry {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
+    font-weight: 600;
+    font-size: 18px;
+    letter-spacing: -0.5px;
+    color: var(--cream2);
+    flex: 0 0 auto;
+  }
+  .club-shots {
+    font-size: 11px;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-left: 8px;
+  }
+  .club-chev {
+    color: var(--dim2);
+    font-size: 14px;
+    margin-left: 6px;
+  }
+  .club-bar {
+    height: 4px;
+    border-radius: 999px;
+    margin-top: 8px;
+    background: rgba(237,228,207,0.05);
+    overflow: hidden;
+  }
+  .club-bar > span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--maroon) 0%, rgba(122,39,39,0.45) 80%, rgba(237,228,207,0.2) 100%);
+    border-radius: 999px;
+  }
+  .club-row.unknown {
+    font-style: italic;
+    color: var(--dim);
+  }
+  .club-row.unknown .club-tag,
+  .club-row.unknown .club-carry,
+  .club-row.unknown .club-name {
+    color: var(--dim);
+    font-style: italic;
+    text-transform: none;
+  }
+
+  /* ── TAKEAWAY ────────────────────────────────────────────── */
+  .takeaway-eb {
+    display: flex; align-items: center; gap: 6px;
+    color: var(--maroon);
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 10px;
+    letter-spacing: 2.8px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .takeaway-eb .star {
+    color: var(--maroon);
+    font-size: 14px;
+    line-height: 1;
+  }
+  .takeaway-body {
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--cream);
+  }
+  .accent-blue {
+    color: var(--blue);
+    font-style: italic;
+  }
+
+  /* ── HISTORY ─────────────────────────────────────────────── */
+  .history-card {
+    display: grid;
+    grid-template-columns: 60px 1fr auto;
+    gap: 14px;
+    align-items: center;
+    background: var(--green2);
+    border: 1px solid var(--thin);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 10px;
+    min-height: 88px;
+    cursor: pointer;
+  }
+  .hc-date {
+    text-align: left;
+  }
+  .hc-day {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
+    font-weight: 600;
+    font-size: 28px;
+    letter-spacing: -1px;
+    line-height: 1;
+    color: var(--cream2);
+    text-transform: uppercase;
+  }
+  .hc-month {
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 10px;
     letter-spacing: 2.5px;
     text-transform: uppercase;
-    color: var(--cream);
-    opacity: 0.55;
-    margin-bottom: 4px;
+    color: var(--maroon);
+    margin-top: 4px;
   }
-  .stat .value {
-    font-family: var(--f-display);
+  .hc-meta { font-size: 13px; color: var(--cream); line-height: 1.45; }
+  .hc-meta div + div { color: var(--dim); }
+  .hc-right { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .hc-num {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
     font-weight: 600;
-    font-size: clamp(34px, 9vw, 52px);
-    line-height: 1;
-    letter-spacing: -1.5px;
-    color: var(--cream);
-  }
-  .stat .unit {
-    font-family: var(--f-body);
-    font-size: 12px;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    color: var(--cream);
-    opacity: 0.55;
-    margin-left: 4px;
-  }
-  .stat .value.dim { opacity: 0.35; }
-
-  /* ── sessions ───────────────────────────────────────────────────────── */
-
-  .session {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 6px 14px;
-    padding: 14px 0;
-    border-bottom: 1px solid rgba(237, 228, 207, 0.08);
-  }
-  .session:last-child { border-bottom: none; }
-  .session .date {
-    font-family: var(--f-display);
-    font-weight: 600;
-    font-size: 22px;
+    font-size: 24px;
     letter-spacing: -0.5px;
+    line-height: 1;
+    color: var(--cream2);
+  }
+  .hc-num .u { font-size: 11px; letter-spacing: 1.6px; color: var(--dim); margin-left: 3px; text-transform: uppercase; }
+
+  /* ── TRENDS ──────────────────────────────────────────────── */
+  .trend-card { padding: 18px; }
+  .trend-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .trend-current {
+    display: flex; align-items: baseline; gap: 6px;
+  }
+  .trend-num {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
+    font-weight: 600;
+    font-size: 38px;
+    letter-spacing: -1.2px;
+    line-height: 0.95;
+    color: var(--cream2);
+  }
+  .trend-unit {
+    font-size: 11px;
+    letter-spacing: 1.8px;
     text-transform: uppercase;
+    color: var(--dim);
   }
-  .session .meta {
-    font-family: var(--f-eyebrow);
-    font-size: 10px;
-    letter-spacing: 1.5px;
-    text-transform: uppercase;
-    color: var(--cream);
-    opacity: 0.55;
-    align-self: end;
-    text-align: right;
-  }
-  .session .duration {
-    font-size: 12px;
-    color: var(--cream);
-    opacity: 0.55;
-    grid-column: 1 / 2;
-  }
-  .pill {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: 50px;
-    border: 1px solid rgba(237, 228, 207, 0.18);
-    font-family: var(--f-eyebrow);
+  .trend-xlabels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
     font-size: 9px;
     letter-spacing: 1.8px;
     text-transform: uppercase;
-    color: var(--cream);
-    opacity: 0.85;
+    color: var(--dim2);
   }
 
-  /* ── states ─────────────────────────────────────────────────────────── */
-
-  .state {
-    text-align: center;
-    padding: 60px 24px;
-    color: var(--cream);
-    opacity: 0.7;
-    font-size: 14px;
+  /* ── GATE / EMPTY / ERROR / LOADING ──────────────────────── */
+  .state-card {
+    background: var(--green2);
+    border: 1px solid var(--maroon2);
+    border-radius: 14px;
+    padding: 28px 22px;
+    margin: 30px 0;
+    text-align: left;
   }
-  .state .big {
-    font-family: var(--f-display);
+  .state-title {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
     font-weight: 600;
-    font-size: 28px;
     text-transform: uppercase;
-    letter-spacing: -1px;
+    font-size: 30px;
+    letter-spacing: -1.2px;
+    line-height: 1;
+    color: var(--cream2);
+    margin: 0 0 12px;
+  }
+  .state-body {
+    font-size: 14px;
+    line-height: 1.65;
     color: var(--cream);
-    opacity: 1;
-    margin-bottom: 8px;
+    margin: 0;
   }
-  .state .small {
-    font-size: 13px;
-    line-height: 1.55;
-  }
-  .state em { color: var(--blue); font-style: italic; }
-  button.retry {
-    margin-top: 20px;
+  .state-body em { color: var(--blue); font-style: italic; }
+  .retry-btn {
+    margin-top: 18px;
+    appearance: none;
     background: var(--maroon);
-    color: var(--cream);
-    border: none;
-    padding: 10px 24px;
-    font-family: var(--f-eyebrow);
+    color: var(--cream2);
+    border: 1px solid var(--maroon2);
+    border-radius: 999px;
+    padding: 12px 22px;
+    min-height: 44px;
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-weight: 400;
     font-size: 11px;
-    letter-spacing: 2px;
+    letter-spacing: 2.4px;
     text-transform: uppercase;
-    border-radius: 50px;
     cursor: pointer;
   }
 
+  /* ── UTIL ────────────────────────────────────────────────── */
   .hidden { display: none !important; }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px;
+    margin: -1px; padding: 0; overflow: hidden;
+    clip: rect(0,0,0,0); border: 0;
+  }
+
+  /* Skeleton shimmer for loading */
+  @keyframes shimmer { 0%{opacity:.35} 50%{opacity:.7} 100%{opacity:.35} }
+  .skel { animation: shimmer 1.6s ease-in-out infinite; }
 </style>
 </head>
 <body>
-
-<div class="wrap">
-
-  <!-- LOADING -->
-  <div id="loading" class="state">
-    <div class="small">loading your stats…</div>
-  </div>
-
-  <!-- ERROR -->
-  <div id="error" class="state hidden">
-    <div class="big">something went sideways</div>
-    <div class="small" id="error-detail"></div>
-    <button class="retry" onclick="loadStats()">try again</button>
-  </div>
-
-  <!-- EMPTY (no shots yet) -->
-  <div id="empty" class="state hidden">
-    <div class="big">first shot incoming</div>
-    <div class="small">your stats will appear here after your first session.<br><em>swing your swing.</em></div>
-  </div>
-
-  <!-- POPULATED -->
-  <main id="stats" class="hidden">
-    <header>
-      <div class="eyebrow">your stats</div>
-      <h1 id="hero"></h1>
-      <div class="name" id="player-name"></div>
+  <main class="canvas" id="canvas">
+    <!-- HEADER -->
+    <header class="header">
+      <h1 class="title">stats</h1>
+      <button class="icon-btn" aria-label="share">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
+          <path d="M16 6l-4-4-4 4" />
+          <path d="M12 2v14" />
+        </svg>
+      </button>
     </header>
 
-    <hr class="div">
+    <!-- TABS -->
+    <nav class="tabs" role="tablist" aria-label="stats views">
+      <button class="tab" role="tab" id="tab-session"  aria-selected="true"  data-view="session">session</button>
+      <button class="tab" role="tab" id="tab-history"  aria-selected="false" data-view="history">history</button>
+      <button class="tab" role="tab" id="tab-trends"   aria-selected="false" data-view="trends">trends</button>
+    </nav>
 
-    <section>
-      <div class="eyebrow">career</div>
-      <div class="stat-grid">
-        <div class="stat"><div class="label">total shots</div><div class="value" id="s-total"></div></div>
-        <div class="stat"><div class="label">sessions</div><div class="value" id="s-sessions"></div></div>
-        <div class="stat"><div class="label">avg carry</div><div class="value" id="s-carry"><span class="unit">yds</span></div></div>
-        <div class="stat"><div class="label">longest</div><div class="value" id="s-longest"><span class="unit">yds</span></div></div>
-        <div class="stat"><div class="label">avg ball speed</div><div class="value" id="s-bs"><span class="unit">mph</span></div></div>
-        <div class="stat"><div class="label">top speed</div><div class="value" id="s-tops"><span class="unit">mph</span></div></div>
+    <!-- STATE SLOTS -->
+    <section id="state-loading" class="hidden" aria-live="polite">
+      <div class="state-card">
+        <h2 class="state-title">loading your stats…</h2>
+        <p class="state-body">pulling shots off the launch monitor. <em>hold tight.</em></p>
       </div>
     </section>
 
-    <section>
-      <div class="eyebrow">recent sessions</div>
-      <div id="session-list"></div>
+    <section id="state-error" class="hidden" aria-live="polite">
+      <div class="state-card">
+        <h2 class="state-title">something went sideways</h2>
+        <p class="state-body">we couldn't reach the stats service. give it another swing.</p>
+        <button class="retry-btn" id="retry-btn" type="button">retry</button>
+      </div>
+    </section>
+
+    <section id="state-empty" class="hidden" aria-live="polite">
+      <div class="state-card">
+        <h2 class="state-title">first shot incoming · swing your swing.</h2>
+        <p class="state-body">when you hit your first ball, your numbers will land here.</p>
+      </div>
+    </section>
+
+    <!-- ─── POPULATED: SESSION ─── -->
+    <section id="view-session" class="view hidden" role="tabpanel" aria-labelledby="tab-session">
+      <div id="session-strip" class="session-strip"></div>
+      <div id="session-chips" class="chip-row" role="group" aria-label="club filter"></div>
+
+      <article id="session-hero" class="card maroon-edge hero">
+        <div class="hero-top">
+          <p class="eyebrow" id="hero-eyebrow">BEST CARRY · ALL CLUBS</p>
+          <span id="hero-delta" class="delta-pill hidden"></span>
+        </div>
+        <div class="hero-numrow">
+          <div>
+            <div class="hero-num" id="hero-num">—</div>
+            <span class="hero-unit">yds</span>
+          </div>
+          <svg id="hero-spark" class="hero-sparkline" width="110" height="38" viewBox="0 0 110 38" aria-hidden="true"></svg>
+        </div>
+        <p class="hero-subline" id="hero-subline">— · — shots</p>
+        <p class="hero-para" id="hero-para"></p>
+      </article>
+
+      <div class="stat-grid" id="stat-grid"></div>
+
+      <p class="eyebrow dim">BY CLUB</p>
+      <h3 class="section-title">your bag, tonight</h3>
+      <div id="club-rows"></div>
+
+      <div class="divider"></div>
+
+      <article class="card maroon-edge" id="takeaway-card">
+        <div class="takeaway-eb"><span class="star">✦</span> SESSION TAKEAWAY</div>
+        <p class="takeaway-body" id="takeaway-body"></p>
+      </article>
+    </section>
+
+    <!-- ─── POPULATED: HISTORY ─── -->
+    <section id="view-history" class="view hidden" role="tabpanel" aria-labelledby="tab-history">
+      <p class="eyebrow">RECENT SESSIONS · TAP TO OPEN</p>
+      <div id="history-list"></div>
+      <div id="history-empty" class="state-card hidden">
+        <h2 class="state-title">no past sessions yet.</h2>
+        <p class="state-body"><em>swing your swing.</em></p>
+      </div>
+    </section>
+
+    <!-- ─── POPULATED: TRENDS ─── -->
+    <section id="view-trends" class="view hidden" role="tabpanel" aria-labelledby="tab-trends">
+      <div id="trends-chips" class="chip-row" role="group" aria-label="club filter"></div>
+      <p class="eyebrow" id="trends-eyebrow">ALL CLUBS · LAST 6 SESSIONS</p>
+      <div id="trends-body"></div>
+      <div id="trends-gate" class="state-card hidden">
+        <h2 class="state-title">trends unlock at 3 sessions</h2>
+        <p class="state-body" id="trends-gate-body"></p>
+      </div>
     </section>
   </main>
 
-</div>
-
 <script>
-  // ── config ────────────────────────────────────────────────────────────
-  // Edit only this block before deploy.
-  const STATS_API_URL = 'https://ufzmrvnunjmlqqwjqprq.supabase.co/functions/v1/stats';
+/* ╔══════════════════════════════════════════════════════════╗
+   ║ CLUBHOUSE · STATS v3                                      ║
+   ║ single-file canvas — consumes edge fn shape directly      ║
+   ╚══════════════════════════════════════════════════════════╝ */
 
-  // ── helpers ───────────────────────────────────────────────────────────
-  const $ = (id) => document.getElementById(id);
-  const show = (id) => $(id).classList.remove('hidden');
-  const hide = (id) => $(id).classList.add('hidden');
+// ── MOCK DATA (mirrors the edge fn response shape) ───────────
+const __MOCK_DATA__ = (() => {
+  const now = new Date();
+  const minutesAgo = (m) => new Date(now.getTime() - m*60_000).toISOString();
+  const daysAgo    = (d, h=19) => {
+    const dt = new Date(now); dt.setDate(dt.getDate()-d); dt.setHours(h, 14, 0, 0);
+    return dt.toISOString();
+  };
+  const ymd = (iso) => iso.slice(0, 10);
 
-  function fmtNum(n, digits = 0) {
-    if (n == null || isNaN(n)) return '—';
-    return Number(n).toLocaleString(undefined, {
-      minimumFractionDigits: digits, maximumFractionDigits: digits
+  return {
+    session: {
+      player: { display_name: "L. Hyde", optix_user_id: "mock_user" },
+      session: {
+        id: "00000000-0000-0000-0000-000000000a01",
+        bay_number: 2,
+        started_at: minutesAgo(74),
+        ended_at: null,
+        shot_count: 47,
+        optix_booking_id: "bk_881291",
+        session_open: true,
+        duration_minutes: 74,
+        clubs_used: ["DRIVER","IRON7","IRON6","PW"]
+      },
+      hero: {
+        selected_club: "all",
+        best_carry: 248,
+        best_carry_club: "DRIVER",
+        total_carry: 7321,
+        total_shots: 47,
+        sparkline_max_carry: [212, 225, 218, 231, 224, 241, 248],
+        delta_vs_previous_session: 7
+      },
+      stats: {
+        ball_speed:   { avg: 132.7, delta: 3.3 },
+        vla:          { avg: 14.2,  delta: 0.6 },
+        smash:        { avg: 1.4,   delta: 0.0 },
+        club_path:    { avg: 1.2,   word: "in-to-out" },
+        face_to_path: { avg: -0.8,  word: "closed" }
+      },
+      by_club: [
+        { club: "DRIVER", shots: 14, max_carry: 248, avg_carry: 231, smash_avg: 1.5, face_avg: -0.7 },
+        { club: "IRON7",  shots: 17, max_carry: 168, avg_carry: 162, smash_avg: 1.3, face_avg: -0.2 },
+        { club: "IRON6",  shots: 10, max_carry: 181, avg_carry: 173, smash_avg: 1.3, face_avg:  0.1 },
+        { club: "PW",     shots: 5,  max_carry: 118, avg_carry: 112, smash_avg: 1.2, face_avg: -0.4 },
+        { club: null,     shots: 1,  max_carry: 152, avg_carry: 152, smash_avg: null, face_avg: null }
+      ],
+      takeaway: {
+        peak_smash: 1.49,
+        peak_smash_club: "DRIVER",
+        longest_club: "DRIVER",
+        longest_carry: 248,
+        longest_club_avg_face: -0.7,
+        longest_club_face_word: "closed",
+        most_hit_club: "IRON7",
+        most_hit_shots: 17,
+        fallback_text: null
+      }
+    },
+    history: {
+      sessions: [
+        { booking_id: "bk_881291", started_at: minutesAgo(74), ended_at: null, bay_number: 2, shot_count: 47, max_carry: 248, sparkline: [212,225,218,231,224,241,248], shots_logged_clubs: ["DRIVER","IRON7","PW"] },
+        { booking_id: "bk_881114", started_at: daysAgo(2, 20), ended_at: daysAgo(2, 21), bay_number: 1, shot_count: 38, max_carry: 241, sparkline: [205,212,218,225,231,241], shots_logged_clubs: ["DRIVER","IRON7"] },
+        { booking_id: "bk_880990", started_at: daysAgo(5, 18), ended_at: daysAgo(5, 19), bay_number: 2, shot_count: 52, max_carry: 224, sparkline: [198,206,212,218,221,224], shots_logged_clubs: ["DRIVER","IRON6","IRON7"] },
+        { booking_id: "bk_880801", started_at: daysAgo(9, 19), ended_at: daysAgo(9, 20), bay_number: 2, shot_count: 41, max_carry: 218, sparkline: [192,200,206,210,214,218], shots_logged_clubs: ["DRIVER","IRON7"] },
+        { booking_id: "bk_880612", started_at: daysAgo(14,17), ended_at: daysAgo(14,18), bay_number: 1, shot_count: 29, max_carry: 212, sparkline: [188,194,200,204,208,212], shots_logged_clubs: ["IRON7","PW"] },
+        { booking_id: "bk_880401", started_at: daysAgo(21,20), ended_at: daysAgo(21,21), bay_number: 2, shot_count: 34, max_carry: 205, sparkline: [180,186,192,196,200,205], shots_logged_clubs: ["DRIVER","IRON7"] }
+      ]
+    },
+    trends: {
+      ready: true,
+      total_sessions: 6,
+      selected_club: "all",
+      lifetime_clubs: [
+        { club: "DRIVER", shots: 178 },
+        { club: "IRON7",  shots: 312 },
+        { club: "IRON6",  shots: 144 },
+        { club: "PW",     shots: 92 },
+        { club: "WEDGE",  shots: 47 }
+      ],
+      charts: {
+        carry: {
+          series: [
+            { date: ymd(daysAgo(21)), value: 205 },
+            { date: ymd(daysAgo(14)), value: 212 },
+            { date: ymd(daysAgo(9)),  value: 218 },
+            { date: ymd(daysAgo(5)),  value: 224 },
+            { date: ymd(daysAgo(2)),  value: 241 },
+            { date: ymd(now.toISOString()), value: 248 }
+          ],
+          current: 248, delta_vs_previous: 7
+        },
+        ball_speed: {
+          series: [
+            { date: ymd(daysAgo(21)), value: 122.1 },
+            { date: ymd(daysAgo(14)), value: 124.3 },
+            { date: ymd(daysAgo(9)),  value: 126.0 },
+            { date: ymd(daysAgo(5)),  value: 128.8 },
+            { date: ymd(daysAgo(2)),  value: 129.4 },
+            { date: ymd(now.toISOString()), value: 132.7 }
+          ],
+          current: 132.7, delta_vs_previous: 3.3
+        },
+        smash: {
+          series: [
+            { date: ymd(daysAgo(21)), value: 1.32 },
+            { date: ymd(daysAgo(14)), value: 1.34 },
+            { date: ymd(daysAgo(9)),  value: 1.36 },
+            { date: ymd(daysAgo(5)),  value: 1.37 },
+            { date: ymd(daysAgo(2)),  value: 1.38 },
+            { date: ymd(now.toISOString()), value: 1.41 }
+          ],
+          current: 1.41, delta_vs_previous: 0.03
+        }
+      }
+    }
+  };
+})();
+
+// ── DATA SOURCE WRAPPER ──────────────────────────────────────
+const EDGE_URL = "https://ufzmrvnunjmlqqwjqprq.supabase.co/functions/v1/stats";
+
+function isMockMode() {
+  const params = new URLSearchParams(location.search);
+  if (params.get("mock") === "1") return true;
+  if (params.get("mock") === "0") return false;
+  const h = location.hostname;
+  return !h || h === "localhost" || h === "127.0.0.1" || h.endsWith(".local") || h === "file";
+}
+
+async function fetchView(view, opts={}) {
+  if (isMockMode()) {
+    await new Promise(r => setTimeout(r, 220));
+    return __MOCK_DATA__[view] || null;
+  }
+  const params = new URLSearchParams(location.search);
+  // Token comes from URL once (handed off from the host page) but is sent
+  // ONLY as an Authorization header — never echoed back into the query.
+  const token = params.get("token") || "";
+  const user_id = params.get("user_id") || "";
+  const url = new URL(EDGE_URL);
+  url.searchParams.set("view", view);
+  if (opts.club) url.searchParams.set("club", opts.club);
+  if (user_id) url.searchParams.set("user_id", user_id);
+  const res = await fetch(url.toString(), {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  });
+  if (!res.ok) throw new Error(`stats ${view} failed: ${res.status}`);
+  return res.json();
+}
+
+// ── HELPERS ──────────────────────────────────────────────────
+const $  = (sel, root=document) => root.querySelector(sel);
+const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+
+function timeOfDay(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  const fmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', hour12: false });
+  const parts = fmt.formatToParts(d);
+  const hour = Number((parts.find(p => p.type === 'hour') || {}).value ?? d.getHours());
+  if (hour >= 5  && hour < 9)  return "early morning";
+  if (hour >= 9  && hour < 12) return "late morning";
+  if (hour >= 12 && hour < 17) return "afternoon";
+  if (hour >= 17 && hour < 20) return "evening";
+  return "tonight";
+}
+
+function relativeDay(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const startD   = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const startNow = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.round((startNow - startD) / (24*3600*1000));
+  if (diff === 0) return "today";
+  if (diff === 1) return "yesterday";
+  if (diff < 7)   return `${diff} days ago`;
+  if (diff < 14)  return "last week";
+  if (diff < 30)  return `${Math.floor(diff/7)} weeks ago`;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function fmtSigned(v, digits=1) {
+  if (v == null || Number.isNaN(v)) return "—";
+  const n = Number(v);
+  const s = n.toFixed(digits);
+  return n > 0 ? `+${s}` : s;
+}
+
+function clubLabel(c) {
+  if (!c) return "Unknown";
+  const map = {
+    DRIVER: "driver", WOOD3: "3 wood", WOOD5: "5 wood",
+    HYBRID: "hybrid", HYBRID3: "3 hybrid", HYBRID4: "4 hybrid",
+    IRON3: "3 iron", IRON4: "4 iron", IRON5: "5 iron", IRON6: "6 iron",
+    IRON7: "7 iron", IRON8: "8 iron", IRON9: "9 iron",
+    PW: "pitching wedge", GW: "gap wedge", SW: "sand wedge", LW: "lob wedge",
+    WEDGE: "wedge", PUTTER: "putter"
+  };
+  return map[c] || c.toLowerCase();
+}
+function clubShort(c) {
+  if (!c) return "?";
+  const map = {
+    DRIVER: "DR", WOOD3: "3W", WOOD5: "5W",
+    HYBRID: "Hy", HYBRID3: "3H", HYBRID4: "4H",
+    IRON3: "3i", IRON4: "4i", IRON5: "5i", IRON6: "6i",
+    IRON7: "7i", IRON8: "8i", IRON9: "9i",
+    PW: "PW", GW: "GW", SW: "SW", LW: "LW", WEDGE: "Wg", PUTTER: "Pt"
+  };
+  return map[c] || c.slice(0,2);
+}
+
+// Render a labeled "vs previous session" pill from a delta value.
+function deltaPillHTML(delta, digits=0, unit="") {
+  if (delta == null) return "";
+  const epsilon = digits === 0 ? 0.5 : Math.pow(10, -digits)/2;
+  if (Math.abs(delta) < epsilon) return "";
+  const up = delta > 0;
+  const arrow = up ? "↑ +" : "↓ ";
+  const cls = up ? "up" : "down";
+  const abs = Math.abs(delta).toFixed(digits);
+  const unitSpace = unit ? ` ${unit}` : "";
+  return `<span class="delta-pill ${cls}">${arrow}${abs}${unitSpace} vs previous session</span>`;
+}
+
+function deltaText(delta, digits=0, unit="") {
+  if (delta == null) return null;
+  const epsilon = digits === 0 ? 0.5 : Math.pow(10, -digits)/2;
+  if (Math.abs(delta) < epsilon) return null;
+  const up = delta > 0;
+  const arrow = up ? "↑ +" : "↓ ";
+  const abs = Math.abs(delta).toFixed(digits);
+  return { text: `${arrow}${abs}${unit} vs previous session`, up };
+}
+
+// ── SVG CHARTS ───────────────────────────────────────────────
+function buildLinePath(points, w, h, padX=0, padY=4) {
+  if (!points || points.length === 0) return { line: "", area: "", lastPt: null };
+  if (points.length === 1) {
+    const x = w/2, y = h/2;
+    return { line: `M${x} ${y}`, area: "", lastPt: { x, y } };
+  }
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = (max - min) || 1;
+  const innerW = w - padX*2;
+  const innerH = h - padY*2;
+  const coords = points.map((p, i) => {
+    const x = padX + (i / (points.length - 1)) * innerW;
+    const y = padY + innerH - ((p - min) / range) * innerH;
+    return { x, y };
+  });
+  let d = `M${coords[0].x.toFixed(2)} ${coords[0].y.toFixed(2)}`;
+  for (let i = 1; i < coords.length; i++) {
+    const p0 = coords[i-1], p1 = coords[i];
+    const cx = (p0.x + p1.x) / 2;
+    d += ` C${cx.toFixed(2)} ${p0.y.toFixed(2)}, ${cx.toFixed(2)} ${p1.y.toFixed(2)}, ${p1.x.toFixed(2)} ${p1.y.toFixed(2)}`;
+  }
+  const area = `${d} L${coords[coords.length-1].x.toFixed(2)} ${h} L${coords[0].x.toFixed(2)} ${h} Z`;
+  return { line: d, area, lastPt: coords[coords.length-1] };
+}
+
+function renderSparkline(svg, points, color="var(--gold)") {
+  const w = svg.viewBox.baseVal.width || 110;
+  const h = svg.viewBox.baseVal.height || 38;
+  const { line, lastPt } = buildLinePath(points, w, h, 2, 4);
+  svg.innerHTML = `
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+    ${lastPt ? `<circle cx="${lastPt.x.toFixed(2)}" cy="${lastPt.y.toFixed(2)}" r="2.6" fill="${color}"/>` : ""}
+  `;
+}
+
+function renderLineChart(points, opts={}) {
+  const w = opts.w || 380, h = opts.h || 120;
+  const { line, area, lastPt } = buildLinePath(points, w, h, 4, 10);
+  const stroke = opts.stroke || "var(--cream2)";
+  const fill   = opts.areaColor || "rgba(243,236,218,0.06)";
+  return `
+    <svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" aria-hidden="true">
+      <path d="${area}" fill="${fill}" stroke="none"/>
+      <path d="${line}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      ${lastPt ? `<circle cx="${lastPt.x.toFixed(2)}" cy="${lastPt.y.toFixed(2)}" r="5" fill="${stroke}"/>` : ""}
+    </svg>
+  `;
+}
+
+// ── RENDER: SESSION ──────────────────────────────────────────
+let _sessionData = null;
+let _activeClubFilter = "all"; // "all" | club string | "__unknown__"
+
+function applySessionFilter(club) {
+  _activeClubFilter = club;
+  $$('#session-chips .chip').forEach(c => {
+    c.setAttribute('aria-pressed', c.dataset.club === club ? 'true' : 'false');
+  });
+  // Re-render hero/stats/club rows from server data, scoping client-side.
+  renderSessionPopulated(_sessionData);
+}
+
+function scopedByClub(data) {
+  const rows = data.by_club || [];
+  if (_activeClubFilter === "all") return rows;
+  if (_activeClubFilter === "__unknown__") return rows.filter(c => c.club == null);
+  return rows.filter(c => c.club === _activeClubFilter);
+}
+
+function renderSessionStrip(s) {
+  const strip = $('#session-strip');
+  const ses = s.session;
+  if (!ses) { strip.innerHTML = ""; return; }
+  const tod = timeOfDay(ses.started_at);
+  const bay = ses.bay_number;
+  const mins = ses.duration_minutes ?? Math.round((Date.now() - new Date(ses.started_at).getTime())/60000);
+  const shots = ses.shot_count ?? 0;
+  if (ses.session_open) {
+    strip.innerHTML = `
+      <span class="live-dot" aria-hidden="true"></span>
+      <span class="strip-text">${tod}</span><span class="strip-sep">·</span>
+      <span>bay ${bay}</span><span class="strip-sep">·</span>
+      <span>${mins} min</span><span class="strip-sep">·</span>
+      <span>${shots} shots</span>
+    `;
+  } else {
+    const rel = relativeDay(ses.started_at);
+    strip.innerHTML = `
+      <span class="strip-text">last session</span><span class="strip-sep">·</span>
+      <span>${rel}</span><span class="strip-sep">·</span>
+      <span>bay ${bay}</span><span class="strip-sep">·</span>
+      <span>${shots} shots</span>
+    `;
+  }
+}
+
+function renderSessionChips(s) {
+  const wrap = $('#session-chips');
+  wrap.innerHTML = "";
+  const rows = s.by_club || [];
+  const named = rows
+    .filter(c => c.club != null)
+    .sort((a,b) => b.shots - a.shots);
+  const hasUnknown = rows.some(c => c.club == null);
+
+  const mk = (label, club, mods="") => {
+    const btn = document.createElement('button');
+    btn.className = `chip ${mods}`;
+    btn.type = "button";
+    btn.dataset.club = club;
+    btn.setAttribute('aria-pressed', club === _activeClubFilter ? 'true' : 'false');
+    btn.textContent = label;
+    btn.addEventListener('click', () => applySessionFilter(club));
+    wrap.appendChild(btn);
+  };
+  mk("all clubs", "all");
+  named.forEach(c => mk(clubLabel(c.club), c.club));
+  if (hasUnknown) mk("Unknown", "__unknown__", "unknown");
+}
+
+function renderHero(s) {
+  const filt = _activeClubFilter;
+  const isAll = filt === "all";
+  const hero = s.hero || {};
+  const scope = scopedByClub(s);
+
+  const filtLabel = isAll
+    ? "ALL CLUBS"
+    : (filt === "__unknown__" ? "UNKNOWN" : clubLabel(filt).toUpperCase());
+
+  $('#hero-eyebrow').textContent = `BEST CARRY · ${filtLabel}`;
+
+  // For the "all" filter, trust the server's hero block exactly.
+  // For per-club filters (client-only scoping), derive best/total from by_club.
+  let bestCarry, totalCarry, shotCount;
+  if (isAll) {
+    bestCarry  = hero.best_carry;
+    totalCarry = hero.total_carry;  // trust server; no client recompute
+    shotCount  = hero.total_shots ?? 0;
+  } else {
+    bestCarry  = scope.reduce((m,c) => Math.max(m, c.max_carry || 0), 0) || null;
+    totalCarry = null; // not available without server recompute — render em-dash
+    shotCount  = scope.reduce((a,c) => a + c.shots, 0);
+  }
+
+  $('#hero-num').textContent = bestCarry == null ? "—" : Math.round(bestCarry);
+
+  // Delta pill — only on the "all" filter; comes straight from server.
+  const deltaEl = $('#hero-delta');
+  if (isAll && hero.delta_vs_previous_session != null) {
+    const dt = deltaText(hero.delta_vs_previous_session, 0, " yds");
+    if (dt) {
+      deltaEl.classList.remove('hidden');
+      deltaEl.classList.toggle('up', dt.up);
+      deltaEl.classList.toggle('down', !dt.up);
+      deltaEl.textContent = dt.text;
+    } else {
+      deltaEl.classList.add('hidden');
+    }
+  } else {
+    deltaEl.classList.add('hidden');
+  }
+
+  // Subline — trust server total_carry; em-dash if null
+  const totalCarryDisp = totalCarry == null ? "—" : `${Math.round(totalCarry)} yds`;
+  $('#hero-subline').textContent = `total ${totalCarryDisp} · ${shotCount} shots`;
+
+  // Sparkline — only on "all"
+  const spark = $('#hero-spark');
+  if (isAll && Array.isArray(hero.sparkline_max_carry) && hero.sparkline_max_carry.length >= 2) {
+    spark.style.display = "";
+    renderSparkline(spark, hero.sparkline_max_carry, "var(--gold)");
+  } else {
+    spark.style.display = "none";
+  }
+
+  // Factual paragraph — built from server takeaway block (no inferential narrative)
+  const para = $('#hero-para');
+  const tk = s.takeaway || {};
+  const clubsUsed = isAll
+    ? ((s.session?.clubs_used && s.session.clubs_used.length) || (s.by_club || []).filter(c => c.club != null).length)
+    : 1;
+
+  let html = `<span class="accent">${shotCount} shots</span> across ${clubsUsed} club${clubsUsed===1?"":"s"}.`;
+  if (tk.longest_club && tk.longest_carry != null) {
+    html += ` ${clubLabel(tk.longest_club)} carried longest at <span class="accent">${Math.round(tk.longest_carry)} yds</span>.`;
+  }
+  if (tk.most_hit_club && tk.most_hit_shots != null) {
+    html += ` ${clubLabel(tk.most_hit_club)} most-hit — ${tk.most_hit_shots} shots.`;
+  }
+  para.innerHTML = html;
+}
+
+function renderStatGrid(s) {
+  const grid = $('#stat-grid');
+  grid.innerHTML = "";
+  const st = s.stats || {};
+
+  const cards = [
+    {
+      eb: "BALL SPEED",
+      num: st.ball_speed?.avg != null ? st.ball_speed.avg.toFixed(1) : "—",
+      unit: "mph",
+      deltaVal: st.ball_speed?.delta,
+      deltaDigits: 1,
+      deltaUnit: " mph"
+    },
+    {
+      eb: "LAUNCH ANGLE",
+      num: st.vla?.avg != null ? st.vla.avg.toFixed(1) : "—",
+      unit: "deg",
+      deltaVal: st.vla?.delta,
+      deltaDigits: 1,
+      deltaUnit: "°"
+    },
+    {
+      eb: "SMASH FACTOR",
+      num: st.smash?.avg != null ? st.smash.avg.toFixed(2) : "—",
+      unit: "",
+      deltaVal: st.smash?.delta,
+      deltaDigits: 2,
+      deltaUnit: ""
+    },
+    {
+      eb: "CLUB PATH",
+      num: st.club_path?.avg != null ? fmtSigned(st.club_path.avg, 1) : "—",
+      unit: "deg",
+      word: st.club_path?.word
+    },
+    {
+      eb: "FACE TO PATH",
+      num: st.face_to_path?.avg != null ? fmtSigned(st.face_to_path.avg, 1) : "—",
+      unit: "deg",
+      word: st.face_to_path?.word
+    }
+  ];
+
+  cards.forEach(c => {
+    const dt = c.deltaVal != null ? deltaText(c.deltaVal, c.deltaDigits, c.deltaUnit) : null;
+    const div = document.createElement('div');
+    div.className = "stat-card";
+    div.innerHTML = `
+      <div class="stat-eyebrow">${c.eb}</div>
+      <div class="stat-numwrap">
+        <div class="stat-num">${c.num}</div>
+        ${c.unit ? `<span class="stat-unit">${c.unit}</span>` : ""}
+      </div>
+      ${c.word ? `<div class="stat-word">${c.word}</div>` : ""}
+      ${dt ? `<div class="stat-delta ${dt.up ? 'up' : ''}">${dt.text}</div>` : ""}
+    `;
+    grid.appendChild(div);
+  });
+}
+
+function renderClubRows(s) {
+  const wrap = $('#club-rows');
+  wrap.innerHTML = "";
+  const rows = [...(s.by_club || [])]
+    .filter(c => c.shots > 0)
+    .sort((a,b) => {
+      if ((a.club == null) !== (b.club == null)) return a.club == null ? 1 : -1;
+      return b.shots - a.shots;
     });
+  if (rows.length === 0) {
+    wrap.innerHTML = `<p style="color:var(--dim); font-size:13px;">no clubs logged yet for this filter.</p>`;
+    return;
   }
-  function fmtDate(iso) {
-    if (!iso) return '';
-    const d = new Date(iso);
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).toLowerCase();
+  const maxOfMax = Math.max(...rows.filter(c => c.max_carry != null).map(c => c.max_carry), 1);
+
+  rows.forEach(c => {
+    const isUnknown = c.club == null;
+    const row = document.createElement('div');
+    row.className = `club-row ${isUnknown ? 'unknown' : ''}`;
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    const carryDisp = c.max_carry != null ? Math.round(c.max_carry) : "—";
+    const widthPct  = c.max_carry != null ? Math.max(6, (c.max_carry / maxOfMax) * 100) : 0;
+    row.innerHTML = `
+      <div class="club-row-head">
+        <span class="club-tag">${isUnknown ? "?" : clubShort(c.club)}</span>
+        <span class="club-name">${isUnknown ? "Unknown" : clubLabel(c.club)}</span>
+        <span class="club-carry">${carryDisp}</span>
+        <span class="club-shots">· ${c.shots} shot${c.shots===1?"":"s"}</span>
+        <span class="club-chev" aria-hidden="true">›</span>
+      </div>
+      ${isUnknown ? "" : `<div class="club-bar"><span style="width:${widthPct.toFixed(1)}%"></span></div>`}
+    `;
+    row.addEventListener('click', () => {
+      console.log('[clubhouse:stats] club row tap', c.club ?? "(Unknown)");
+    });
+    wrap.appendChild(row);
+  });
+}
+
+function renderTakeaway(s) {
+  const body = $('#takeaway-body');
+  const tk = s.takeaway || {};
+  const fragments = [];
+
+  if (tk.peak_smash != null && tk.peak_smash_club) {
+    fragments.push(`Peak smash <span class="accent-blue">${tk.peak_smash.toFixed(2)}</span> with ${clubLabel(tk.peak_smash_club)}.`);
   }
-  function fmtDuration(start, end) {
-    if (!start || !end) return '';
-    const ms = new Date(end) - new Date(start);
-    if (!isFinite(ms) || ms <= 0) return '';
-    const mins = Math.round(ms / 60000);
-    if (mins < 60) return mins + ' min';
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
-    return m ? `${h}h ${m}m` : `${h}h`;
+  if (tk.longest_club && tk.longest_club_avg_face != null) {
+    const fw = tk.longest_club_face_word || "";
+    fragments.push(`${clubLabel(tk.longest_club)} avg face ${fmtSigned(tk.longest_club_avg_face, 1)}°${fw ? ` ${fw}` : ""}.`);
   }
-  function setText(id, value, suffix = '') {
-    const el = $(id);
-    const unit = el.querySelector('.unit');
-    el.firstChild ? null : null;
-    // wipe everything except the .unit child
-    [...el.childNodes].forEach((n) => { if (!n.classList || !n.classList.contains('unit')) el.removeChild(n); });
-    const text = document.createTextNode(value + (suffix || ''));
-    el.insertBefore(text, unit || null);
-    if (value === '—') el.classList.add('dim'); else el.classList.remove('dim');
+  if (tk.most_hit_club && tk.most_hit_shots != null) {
+    fragments.push(`${clubLabel(tk.most_hit_club)} most-hit — ${tk.most_hit_shots} shots.`);
   }
 
-  // ── main ──────────────────────────────────────────────────────────────
-
-  async function loadStats() {
-    hide('error'); hide('empty'); hide('stats');
-    show('loading');
-
-    const params = new URLSearchParams(location.search);
-    const token   = params.get('token');
-    const userId  = params.get('user_id');
-
-    if (!token || !userId) {
-      hide('loading');
-      $('error-detail').textContent = 'this page must be opened from inside the clubhouse app.';
-      return show('error');
+  if (fragments.length === 0) {
+    if (tk.fallback_text) {
+      body.textContent = tk.fallback_text;
+    } else {
+      const shotCount = s.session?.shot_count ?? s.hero?.total_shots ?? 0;
+      body.textContent = `${shotCount} shots logged.`;
     }
+  } else {
+    body.innerHTML = fragments.join(" ");
+  }
+}
 
-    try {
-      const url = `${STATS_API_URL}?token=${encodeURIComponent(token)}&user_id=${encodeURIComponent(userId)}`;
-      const res = await fetch(url, { headers: { Accept: 'application/json' } });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || body.error || ('http ' + res.status));
+function renderSessionPopulated(data) {
+  if (!data) return;
+  _sessionData = data;
+  renderSessionStrip(data);
+  renderSessionChips(data);
+  renderHero(data);
+  renderStatGrid(data);
+  renderClubRows(data);
+  renderTakeaway(data);
+}
+
+// ── RENDER: HISTORY ──────────────────────────────────────────
+function renderHistory(data) {
+  const list = $('#history-list');
+  const empty = $('#history-empty');
+  list.innerHTML = "";
+  if (!data || !data.sessions) return;
+
+  // Server already groups by optix_booking_id and drops null-booking rows.
+  // Just sort for safety.
+  const sessions = [...data.sessions]
+    .filter(s => s.shot_count > 0 && s.booking_id)
+    .sort((a,b) => new Date(b.started_at) - new Date(a.started_at));
+
+  if (sessions.length === 0) {
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  sessions.forEach(s => {
+    const dt = new Date(s.started_at);
+    const day   = dt.getDate();
+    const month = dt.toLocaleString(undefined, { month: 'short' });
+
+    const card = document.createElement('div');
+    card.className = "history-card";
+    card.setAttribute('role', 'button');
+    card.tabIndex = 0;
+    card.innerHTML = `
+      <div class="hc-date">
+        <div class="hc-day">${day}</div>
+        <div class="hc-month">${month}</div>
+      </div>
+      <div class="hc-meta">
+        <div>${s.shot_count} swings</div>
+        <div>bay ${s.bay_number}</div>
+      </div>
+      <div class="hc-right">
+        <svg width="80" height="32" viewBox="0 0 80 32" aria-hidden="true"></svg>
+        <div class="hc-num">${s.max_carry != null ? Math.round(s.max_carry) : "—"}<span class="u">yds</span></div>
+      </div>
+    `;
+    list.appendChild(card);
+    const svg = card.querySelector('svg');
+    if (s.sparkline && s.sparkline.length >= 2) {
+      renderSparkline(svg, s.sparkline, "var(--gold)");
+    }
+    card.addEventListener('click', () => {
+      console.log('[clubhouse:stats] history card tap', s.booking_id);
+    });
+  });
+}
+
+// ── RENDER: TRENDS ───────────────────────────────────────────
+let _trendsData = null;
+let _trendsClubFilter = "all";
+
+function renderTrendsChips(data) {
+  const wrap = $('#trends-chips');
+  wrap.innerHTML = "";
+  const clubs = (data?.lifetime_clubs || []).slice().sort((a,b) => b.shots - a.shots);
+
+  const mk = (label, key) => {
+    const btn = document.createElement('button');
+    btn.className = "chip";
+    btn.type = "button";
+    btn.dataset.club = key;
+    btn.setAttribute('aria-pressed', key === _trendsClubFilter ? 'true' : 'false');
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+      _trendsClubFilter = key;
+      $$('#trends-chips .chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.club === key ? 'true' : 'false'));
+      // Re-fetch trends scoped to the chosen club.
+      loadTrendsForClub(key);
+    });
+    wrap.appendChild(btn);
+  };
+  mk("all clubs", "all");
+  clubs.forEach(c => mk(clubLabel(c.club), c.club));
+}
+
+function paintTrendsBody(data) {
+  const body  = $('#trends-body');
+  const gate  = $('#trends-gate');
+  const gateBody = $('#trends-gate-body');
+  const eyebrow = $('#trends-eyebrow');
+  body.innerHTML = "";
+
+  if (!data) return;
+
+  const total = data.total_sessions || 0;
+  if (!data.ready || total < 3) {
+    eyebrow.classList.add('hidden');
+    gate.classList.remove('hidden');
+    gateBody.innerHTML = `you have ${total}.`;
+    return;
+  }
+  eyebrow.classList.remove('hidden');
+  gate.classList.add('hidden');
+
+  const clubLabelStr = _trendsClubFilter === "all"
+    ? "ALL CLUBS"
+    : clubLabel(_trendsClubFilter).toUpperCase();
+  const windowN = Math.min(6, total);
+  eyebrow.textContent = `${clubLabelStr} · LAST ${windowN} SESSIONS`;
+
+  const charts = data.charts || {};
+  const specs = [
+    { key: 'carry',      label: 'CARRY',        unit: 'yds', digits: 0, stroke: 'var(--cream)' },
+    { key: 'ball_speed', label: 'BALL SPEED',   unit: 'mph', digits: 1, stroke: 'rgba(237, 228, 207, 0.55)' },
+    { key: 'smash',      label: 'SMASH FACTOR', unit: '',    digits: 2, stroke: 'var(--gold)' }
+  ];
+
+  specs.forEach(spec => {
+    const chart = charts[spec.key];
+    if (!chart || !Array.isArray(chart.series)) return;
+    const values = chart.series.map(p => p.value);
+    const dates  = chart.series.map(p => p.date);
+    const pill = deltaPillHTML(chart.delta_vs_previous, spec.digits, spec.unit);
+
+    const currentDisp = chart.current == null
+      ? "—"
+      : (spec.digits === 0 ? Math.round(chart.current) : chart.current.toFixed(spec.digits));
+
+    const card = document.createElement('article');
+    card.className = "card trend-card";
+    card.innerHTML = `
+      <div class="trend-head">
+        <div>
+          <p class="eyebrow">${spec.label} · ${clubLabelStr}</p>
+          <div class="trend-current">
+            <span class="trend-num">${currentDisp}</span>
+            ${spec.unit ? `<span class="trend-unit">${spec.unit}</span>` : ""}
+          </div>
+        </div>
+        ${pill}
+      </div>
+      ${values.length >= 2 ? renderLineChart(values, { stroke: spec.stroke, h: 110, w: 380 }) : ""}
+      <div class="trend-xlabels">
+        <span>${dates[0] || ""}</span>
+        <span>${dates[dates.length-1] || ""}</span>
+      </div>
+    `;
+    body.appendChild(card);
+  });
+}
+
+async function loadTrendsForClub(clubKey) {
+  showState('loading');
+  try {
+    const data = await fetchView('trends', clubKey === 'all' ? {} : { club: clubKey });
+    _trendsData = data;
+    // Re-render chips so the lifetime list survives (server resends it).
+    renderTrendsChips(data || { lifetime_clubs: [] });
+    paintTrendsBody(data);
+    showView('trends');
+  } catch (err) {
+    console.error('[clubhouse:stats] trends load failed', err);
+    showState('error');
+  }
+}
+
+// ── STATE / TAB ORCHESTRATION ────────────────────────────────
+const states = {
+  loading: $('#state-loading'),
+  error:   $('#state-error'),
+  empty:   $('#state-empty'),
+};
+const views = {
+  session: $('#view-session'),
+  history: $('#view-history'),
+  trends:  $('#view-trends'),
+};
+
+function showState(name) {
+  Object.values(states).forEach(el => el.classList.add('hidden'));
+  Object.values(views).forEach(el => el.classList.add('hidden'));
+  if (states[name]) states[name].classList.remove('hidden');
+}
+function showView(name) {
+  Object.values(states).forEach(el => el.classList.add('hidden'));
+  Object.values(views).forEach(el => el.classList.add('hidden'));
+  if (views[name]) views[name].classList.remove('hidden');
+}
+
+let _currentView = 'session';
+async function loadView(name) {
+  _currentView = name;
+  $$('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.view === name ? 'true' : 'false'));
+
+  showState('loading');
+  try {
+    const data = await fetchView(name);
+    if (name === 'session') {
+      if (!data || !data.session || !(data.by_club && data.by_club.length) || (data.hero?.total_shots ?? 0) === 0) {
+        showState('empty');
+        return;
       }
-      const data = await res.json();
-      hide('loading');
-      render(data);
-    } catch (err) {
-      hide('loading');
-      $('error-detail').textContent = String(err.message || err);
-      show('error');
+      _activeClubFilter = "all";
+      renderSessionPopulated(data);
+      showView('session');
+    } else if (name === 'history') {
+      renderHistory(data);
+      showView('history');
+    } else if (name === 'trends') {
+      _trendsData = data;
+      _trendsClubFilter = "all";
+      renderTrendsChips(data || { lifetime_clubs: [] });
+      paintTrendsBody(data);
+      showView('trends');
     }
+  } catch (err) {
+    console.error('[clubhouse:stats] load failed', err);
+    showState('error');
   }
+}
 
-  function render(data) {
-    if (!data.player || !data.career || data.career.total_shots === 0) {
-      return show('empty');
-    }
-    show('stats');
+// ── WIRING ───────────────────────────────────────────────────
+$$('.tab').forEach(t => {
+  t.addEventListener('click', () => loadView(t.dataset.view));
+});
+$('#retry-btn').addEventListener('click', () => loadView(_currentView));
 
-    // header
-    const name = data.player.display_name || 'player';
-    const firstName = name.split(' ')[0] || 'you';
-    $('hero').innerHTML = firstName.toLowerCase() + '<br><em>swings.</em>';
-    $('player-name').textContent = name;
-
-    // career stats
-    const c = data.career;
-    setText('s-total',    fmtNum(c.total_shots));
-    setText('s-sessions', fmtNum(c.total_sessions));
-    setText('s-carry',    fmtNum(c.avg_carry_distance, 0), ' ');
-    setText('s-longest',  fmtNum(c.longest_carry, 0), ' ');
-    setText('s-bs',       fmtNum(c.avg_ball_speed, 1), ' ');
-    setText('s-tops',     fmtNum(c.fastest_ball_speed, 1), ' ');
-
-    // sessions
-    const list = $('session-list');
-    list.innerHTML = '';
-    if (!data.sessions || data.sessions.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'state';
-      empty.innerHTML = '<div class="small">your sessions will show up here.</div>';
-      list.appendChild(empty);
-      return;
-    }
-    for (const s of data.sessions) {
-      const row = document.createElement('div');
-      row.className = 'session';
-
-      const date = document.createElement('div');
-      date.className = 'date';
-      date.textContent = fmtDate(s.started_at);
-      row.appendChild(date);
-
-      const meta = document.createElement('div');
-      meta.className = 'meta';
-      const bay = `bay ${s.bay_number}`;
-      const shots = `${s.shot_count || 0} shots`;
-      const best = s.best_carry ? `${fmtNum(s.best_carry, 0)} yd best` : '';
-      meta.innerHTML = `${bay}<br>${shots}${best ? ' · ' + best : ''}`;
-      row.appendChild(meta);
-
-      const dur = fmtDuration(s.started_at, s.ended_at);
-      if (dur) {
-        const d2 = document.createElement('div');
-        d2.className = 'duration';
-        d2.textContent = dur;
-        row.appendChild(d2);
-      }
-
-      list.appendChild(row);
-    }
-  }
-
-  loadStats();
+// Initial load — session view
+loadView('session');
 </script>
-
 </body>
 </html>
