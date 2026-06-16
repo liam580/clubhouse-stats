@@ -110,6 +110,52 @@ interface SessionResponse {
   takeaway: TakeawayBlock;
 }
 
+// ----- Per-club detail view ---------------------------------------------------
+
+interface ClubMetric {
+  avg: number | null;
+  // Position vs benchmark window: "in" (inside), "above" / "below" (outside),
+  // "n/a" (no benchmark for this club, or no shot data).
+  status: "in" | "above" | "below" | "n/a";
+}
+
+interface ClubDetailShot {
+  shot_number: number;          // 1-indexed for display order
+  recorded_at: string | null;
+  carry_distance: number | null;
+  ball_speed: number | null;
+  club_speed: number | null;
+  vla: number | null;
+  smash: number | null;
+  attack_angle: number | null;
+  club_path: number | null;
+  face_to_target: number | null;
+  face_to_path: number | null;
+}
+
+interface ClubDetailResponse {
+  player: Player;
+  club: string;                 // club code, canvas formats display name
+  total_shots: number;
+  avg_carry: number | null;
+  best_carry: number | null;
+  carry_std_dev: number | null;
+  avg_ball_speed: number | null;
+  avg_club_speed: number | null;
+  metrics: {
+    smash: ClubMetric;
+    launch: ClubMetric;
+    attack: ClubMetric;
+  };
+  benchmarks: {
+    smash: [number, number] | null;
+    launch: [number, number] | null;
+    attack: [number, number] | null;
+  };
+  narrative: string | null;     // {club} placeholder substituted client-side
+  shots: ClubDetailShot[];      // newest-first
+}
+
 interface HistorySessionRow {
   booking_id: string;                   // optix_booking_id (the dedup key); null rows are dropped
   started_at: string;                   // ISO of earliest session row for this booking
@@ -761,6 +807,225 @@ async function shotsForSession(
       created_at: (r.recorded_at as string | null) ?? null,
     };
   });
+}
+
+// Returns every shot of a given club across the supplied session ids,
+// ordered newest-first, with the richer per-shot fields needed for the
+// club-detail view. Distinct from shotsForSessionIds (which discards a
+// few raw fields and ditches order).
+async function shotsForClubAcrossSessions(
+  sb: SupabaseClient,
+  sessionIds: string[],
+  club: string,
+): Promise<ClubDetailShot[]> {
+  if (sessionIds.length === 0) return [];
+  const { data, error } = await sb
+    .from("shots")
+    .select(
+      "carry_distance, ball_speed, vla, club_speed, attack_angle, face_to_target, path, recorded_at",
+    )
+    .in("session_id", sessionIds)
+    .eq("club", club)
+    .order("recorded_at", { ascending: false });
+  if (error) {
+    console.error("[stats] club shots query failed", error);
+    return [];
+  }
+  return (data ?? []).map((r: Record<string, unknown>, idx: number): ClubDetailShot => {
+    const ballSpeed = r.ball_speed as number | null | undefined;
+    const clubSpeed = r.club_speed as number | null | undefined;
+    const faceToTarget = r.face_to_target as number | null | undefined;
+    const path = r.path as number | null | undefined;
+    return {
+      shot_number: idx + 1, // display index, newest-first numbering
+      recorded_at: (r.recorded_at as string | null) ?? null,
+      carry_distance: (r.carry_distance as number | null) ?? null,
+      ball_speed: ballSpeed ?? null,
+      club_speed: clubSpeed ?? null,
+      vla: (r.vla as number | null) ?? null,
+      smash: ballSpeed != null && clubSpeed != null && clubSpeed > 0
+        ? ballSpeed / clubSpeed
+        : null,
+      attack_angle: (r.attack_angle as number | null) ?? null,
+      club_path: path ?? null,
+      face_to_target: faceToTarget ?? null,
+      face_to_path: faceToTarget != null && path != null
+        ? faceToTarget - path
+        : null,
+    };
+  });
+}
+
+// Classifies a metric value vs its benchmark window.
+function classifyMetric(value: number | null, window: [number, number] | null): "in" | "above" | "below" | "n/a" {
+  if (value == null || window == null) return "n/a";
+  const [lo, hi] = window;
+  if (value < lo) return "below";
+  if (value > hi) return "above";
+  return "in";
+}
+
+// Cross-metric narrative for a single club. Strictly factual: cites
+// avg carry + avg ball speed + smash relative to benchmark + launch
+// status. For iron/wedge cases where smash exceeds tour elite, lists
+// the published cause profile (strong-lofted irons, hot face, delofted
+// impact). Returns null if we have too little to say.
+function buildClubNarrative(
+  club: string,
+  avgCarry: number | null,
+  avgBallSpeed: number | null,
+  bench: ClubBench | null,
+  smashStatus: "in" | "above" | "below" | "n/a",
+  avgSmash: number | null,
+  launchStatus: "in" | "above" | "below" | "n/a",
+  avgLaunch: number | null,
+  totalShots: number,
+): string | null {
+  if (totalShots < 3) return null;
+  if (avgCarry == null && avgBallSpeed == null && avgSmash == null) return null;
+
+  const parts: string[] = [];
+  // Lead with carry + ball speed + smash since they ground the rest.
+  const carryFrag = avgCarry != null ? `${Math.round(avgCarry)} yd avg carry` : null;
+  const speedFrag = avgBallSpeed != null ? `${avgBallSpeed.toFixed(1)} mph avg ball speed` : null;
+  const smashFrag = avgSmash != null ? `smash ${avgSmash.toFixed(2)}` : null;
+  const lead = [carryFrag, speedFrag, smashFrag].filter(Boolean).join(" · ");
+  if (lead) parts.push(`{club}: ${lead}.`);
+
+  // Smash interpretation (factual, benchmark-anchored).
+  if (bench && smashStatus !== "n/a") {
+    const [lo, hi] = bench.smash;
+    if (smashStatus === "in") {
+      parts.push(`Smash inside the ${lo.toFixed(2)}–${hi.toFixed(2)} window — efficient strike.`);
+    } else if (smashStatus === "below") {
+      parts.push(`Smash below the ${lo.toFixed(2)}–${hi.toFixed(2)} window — energy loss at contact (off-center / glancing).`);
+    } else if (smashStatus === "above" && isIronOrWedge(club)) {
+      parts.push(`Smash above the ${lo.toFixed(2)}–${hi.toFixed(2)} tour-elite window — typical of strong-lofted irons, a hot face, or delofting at impact.`);
+    } else if (smashStatus === "above" && club.toUpperCase() === "DRIVER") {
+      parts.push(`Smash above the ${lo.toFixed(2)}–${hi.toFixed(2)} window — at or near the USGA 1.50 legal ceiling.`);
+    }
+  }
+
+  // Launch interpretation (only when meaningfully outside).
+  if (bench && launchStatus !== "n/a" && launchStatus !== "in" && avgLaunch != null) {
+    const [lo, hi] = bench.launch;
+    if (launchStatus === "below") {
+      parts.push(`Launch ${avgLaunch.toFixed(1)}° is below the ${lo}–${hi}° window — lower trajectory, less peak height.`);
+    } else {
+      parts.push(`Launch ${avgLaunch.toFixed(1)}° is above the ${lo}–${hi}° window — high trajectory, more peak height and descent.`);
+    }
+  }
+
+  return parts.join(" ");
+}
+
+async function handleClubDetail(
+  req: Request,
+  sb: SupabaseClient,
+  optixUserId: string,
+  club: string,
+  bookingId: string | null,
+): Promise<Response> {
+  const clubCode = club.toUpperCase();
+  const player = await lookupPlayer(sb, optixUserId);
+
+  const emptyResponse: ClubDetailResponse = {
+    player: { display_name: null, optix_user_id: optixUserId },
+    club: clubCode,
+    total_shots: 0,
+    avg_carry: null,
+    best_carry: null,
+    carry_std_dev: null,
+    avg_ball_speed: null,
+    avg_club_speed: null,
+    metrics: {
+      smash: { avg: null, status: "n/a" },
+      launch: { avg: null, status: "n/a" },
+      attack: { avg: null, status: "n/a" },
+    },
+    benchmarks: { smash: null, launch: null, attack: null },
+    narrative: null,
+    shots: [],
+  };
+
+  if (!player) return jsonResponse(req, emptyResponse);
+  emptyResponse.player.display_name = player.display_name ?? null;
+
+  // Resolve session scope, same logic as handleSession.
+  let sessionIds: string[] = [];
+  if (bookingId) {
+    const resolved = await getSessionsForBooking(sb, player.id, bookingId);
+    if (resolved) sessionIds = resolved.sessionIds;
+  } else {
+    const resolved = await getCanonicalSession(sb, optixUserId);
+    if (resolved?.session) sessionIds = [resolved.session.id];
+  }
+  if (sessionIds.length === 0) return jsonResponse(req, emptyResponse);
+
+  const shots = await shotsForClubAcrossSessions(sb, sessionIds, clubCode);
+  if (shots.length === 0) return jsonResponse(req, emptyResponse);
+
+  // Aggregates.
+  const carries = shots.map((s) => s.carry_distance).filter((v): v is number => v != null);
+  const ballSpeeds = shots.map((s) => s.ball_speed).filter((v): v is number => v != null);
+  const clubSpeeds = shots.map((s) => s.club_speed).filter((v): v is number => v != null);
+  const smashes = shots.map((s) => s.smash).filter((v): v is number => v != null);
+  const launches = shots.map((s) => s.vla).filter((v): v is number => v != null);
+  const attacks = shots.map((s) => s.attack_angle).filter((v): v is number => v != null);
+
+  const avgCarry = mean(carries);
+  const bestCarry = maxOrNull(carries);
+  const carryStdDev = stdDev(carries);
+  const avgBallSpeed = mean(ballSpeeds);
+  const avgClubSpeed = mean(clubSpeeds);
+  const avgSmash = mean(smashes);
+  const avgLaunch = mean(launches);
+  const avgAttack = mean(attacks);
+
+  const bench = clubBenchmark(clubCode);
+  const smashStatus = classifyMetric(avgSmash, bench?.smash ?? null);
+  const launchStatus = classifyMetric(avgLaunch, bench?.launch ?? null);
+  const attackStatus = classifyMetric(avgAttack, bench?.attack ?? null);
+
+  const narrative = buildClubNarrative(
+    clubCode,
+    avgCarry,
+    avgBallSpeed,
+    bench,
+    smashStatus,
+    avgSmash,
+    launchStatus,
+    avgLaunch,
+    shots.length,
+  );
+
+  const response: ClubDetailResponse = {
+    player: { display_name: player.display_name ?? null, optix_user_id: optixUserId },
+    club: clubCode,
+    total_shots: shots.length,
+    avg_carry: round1(avgCarry),
+    best_carry: round1(bestCarry),
+    carry_std_dev: carryStdDev != null ? round1(carryStdDev) : null,
+    avg_ball_speed: round1(avgBallSpeed),
+    avg_club_speed: round1(avgClubSpeed),
+    metrics: {
+      smash: { avg: avgSmash != null ? Number(avgSmash.toFixed(2)) : null, status: smashStatus },
+      launch: { avg: round1(avgLaunch), status: launchStatus },
+      attack: { avg: round1(avgAttack), status: attackStatus },
+    },
+    benchmarks: {
+      smash: bench?.smash ?? null,
+      launch: bench?.launch ?? null,
+      attack: bench?.attack ?? null,
+    },
+    narrative,
+    shots: shots.map((s) => ({
+      ...s,
+      smash: s.smash != null ? Number(s.smash.toFixed(2)) : null,
+    })),
+  };
+
+  return jsonResponse(req, response);
 }
 
 interface SessionAggregateRow {
@@ -1574,8 +1839,11 @@ serve(async (req: Request) => {
     if (!token) {
       return errorResponse(req, 400, "missing_required_params");
     }
-    if (!["session", "history", "trends"].includes(view)) {
+    if (!["session", "history", "trends", "club"].includes(view)) {
       return errorResponse(req, 400, "unknown_view");
+    }
+    if (view === "club" && (club === "all" || !club)) {
+      return errorResponse(req, 400, "missing_required_params");
     }
 
     const auth = await validateOptixToken(token);
@@ -1593,6 +1861,9 @@ serve(async (req: Request) => {
     }
     if (view === "history") {
       return await handleHistory(req, sb, verifiedUserId);
+    }
+    if (view === "club") {
+      return await handleClubDetail(req, sb, verifiedUserId, club, bookingId);
     }
     return await handleTrends(req, sb, verifiedUserId, club);
   } catch (err) {

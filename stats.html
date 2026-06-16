@@ -431,6 +431,62 @@
     text-transform: none;
   }
 
+  /* ── CLUB DETAIL ─────────────────────────────────────────── */
+  .stat .badge {
+    display: inline-block;
+    margin-top: 6px;
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 9px;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(237, 228, 207, 0.18);
+  }
+  .stat .badge.in    { color: var(--blue);    border-color: rgba(182, 211, 223, 0.4); }
+  .stat .badge.above { color: var(--maroon2); border-color: rgba(122, 39, 39, 0.45); }
+  .stat .badge.below { color: var(--maroon2); border-color: rgba(122, 39, 39, 0.45); }
+  .shot-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto auto;
+    gap: 4px 14px;
+    align-items: baseline;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(237, 228, 207, 0.08);
+    font-size: 13px;
+    line-height: 1.3;
+  }
+  .shot-row:last-child { border-bottom: none; }
+  .shot-row .sr-num {
+    font-family: var(--f-display, 'Anton'), system-ui, sans-serif;
+    font-size: 18px;
+    color: var(--cream);
+    opacity: 0.55;
+    min-width: 36px;
+  }
+  .shot-row .sr-time {
+    color: var(--dim);
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+  }
+  .shot-row .sr-metric {
+    color: var(--cream);
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .shot-row .sr-metric .sr-unit {
+    color: var(--dim);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-left: 3px;
+  }
+  #club-narrative-card { margin-bottom: 18px; }
+  #club-narrative-card .eyebrow { color: var(--gold); margin-bottom: 8px; }
+  #club-narrative-card .hero-para { font-size: 14px; line-height: 1.6; color: var(--cream); }
+
   /* ── TAKEAWAY ────────────────────────────────────────────── */
   .takeaway-eb {
     display: flex; align-items: center; gap: 6px;
@@ -731,6 +787,22 @@
       </article>
     </section>
 
+    <!-- ─── POPULATED: CLUB DETAIL ─── -->
+    <section id="view-club" class="view hidden" aria-label="club detail">
+      <button id="club-back" type="button" style="background:none;border:none;color:var(--cream);opacity:0.6;font-family:'Bai Jamjuree',sans-serif;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;padding:8px 0 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+        <span aria-hidden="true">←</span> <span id="club-back-label">back to session</span>
+      </button>
+      <div id="club-detail-strip" class="session-strip"></div>
+      <article class="card maroon-edge" id="club-narrative-card">
+        <p class="eyebrow" id="club-narrative-eb">CROSS-METRIC READ</p>
+        <p class="hero-para" id="club-narrative-body"></p>
+      </article>
+      <div class="stat-grid" id="club-stat-grid"></div>
+      <p class="eyebrow dim">SHOTS · NEWEST FIRST</p>
+      <h3 class="section-title">every swing</h3>
+      <div id="club-shots-list"></div>
+    </section>
+
     <!-- ─── POPULATED: HISTORY ─── -->
     <section id="view-history" class="view hidden" role="tabpanel" aria-labelledby="tab-history">
       <p class="eyebrow">RECENT SESSIONS · TAP TO OPEN</p>
@@ -918,6 +990,40 @@ const __MOCK_DATA__ = (() => {
           current: 1.41, delta_vs_previous: 0.03
         }
       }
+    },
+    club: {
+      player: { display_name: "L. Hyde", optix_user_id: "mock_user" },
+      club: "IRON7",
+      total_shots: 17,
+      avg_carry: 162.4,
+      best_carry: 178,
+      carry_std_dev: 8.3,
+      avg_ball_speed: 124.3,
+      avg_club_speed: 88.8,
+      metrics: {
+        smash:  { avg: 1.40, status: "above" },
+        launch: { avg: 18.7, status: "in" },
+        attack: { avg: -4.2, status: "in" }
+      },
+      benchmarks: {
+        smash:  [1.30, 1.38],
+        launch: [18, 23],
+        attack: [-5, -3]
+      },
+      narrative: "{club}: 162 yd avg carry · 124.3 mph avg ball speed · smash 1.40. Smash above the 1.30–1.38 tour-elite window — typical of strong-lofted irons, a hot face, or delofting at impact.",
+      shots: Array.from({ length: 17 }, (_, i) => ({
+        shot_number: i + 1,
+        recorded_at: minutesAgo(8 + i * 4),
+        carry_distance: 158 + (i % 5) * 4 - (i % 3),
+        ball_speed: 122.1 + (i % 4) * 0.8,
+        club_speed: 87.5 + (i % 3) * 0.6,
+        vla: 18.1 + (i % 5) * 0.3,
+        smash: 1.40 + (i % 3) * 0.005,
+        attack_angle: -4.1 + (i % 4) * 0.2,
+        club_path: 0.8 + (i % 3) * 0.3,
+        face_to_target: -0.4 + (i % 4) * 0.2,
+        face_to_path: -1.2 + (i % 4) * 0.15
+      }))
     }
   };
 })();
@@ -939,6 +1045,11 @@ function isMockMode() {
 // any tab click.
 let _pinnedBookingId = null;
 
+// When set, the view-club subview is active and shows shots for this club
+// only. Set by tapping a BY CLUB row; cleared by the back button or any
+// tab click. Mirrors _pinnedBookingId's pattern.
+let _pinnedClub = null;
+
 async function fetchView(view, opts={}) {
   if (isMockMode()) {
     await new Promise(r => setTimeout(r, 220));
@@ -952,7 +1063,7 @@ async function fetchView(view, opts={}) {
   url.searchParams.set("view", view);
   if (opts.club) url.searchParams.set("club", opts.club);
   if (user_id) url.searchParams.set("user_id", user_id);
-  if (view === 'session' && _pinnedBookingId) {
+  if ((view === 'session' || view === 'club') && _pinnedBookingId) {
     url.searchParams.set("booking_id", _pinnedBookingId);
   }
   const res = await fetch(url.toString(), {
@@ -1371,7 +1482,9 @@ function renderClubRows(s) {
       ${isUnknown ? "" : `<div class="club-bar"><span style="width:${widthPct.toFixed(1)}%"></span></div>`}
     `;
     row.addEventListener('click', () => {
-      console.log('[clubhouse:stats] club row tap', c.club ?? "(Unknown)");
+      if (isUnknown) return; // no detail view for the Unknown bucket
+      _pinnedClub = c.club;
+      loadClubDetail(c.club);
     });
     // Item #3 — keyboard activation for role=button rows.
     row.addEventListener('keydown', (e) => {
@@ -1648,6 +1761,7 @@ const views = {
   session: $('#view-session'),
   history: $('#view-history'),
   trends:  $('#view-trends'),
+  club:    $('#view-club'),
 };
 
 function showState(name) {
@@ -1746,12 +1860,138 @@ async function loadView(name) {
   }
 }
 
+// ── RENDER: CLUB DETAIL ───────────────────────────────────────
+async function loadClubDetail(clubKey) {
+  if (!clubKey) return;
+  showState('loading');
+  try {
+    const data = await fetchView('club', { club: clubKey });
+    if (!data || !data.total_shots) {
+      // Shouldn't happen on a happy path (the row was visible), but be safe.
+      showState('empty');
+      return;
+    }
+    renderClubDetail(data);
+    showView('club');
+  } catch (err) {
+    console.error('[clubhouse:stats] club detail load failed', err);
+    showError(err);
+  }
+}
+
+function renderClubDetail(data) {
+  const label = clubLabel(data.club);
+  const labelUpper = label.toUpperCase();
+
+  // Header strip — "DRIVER · 14 SHOTS"
+  $('#club-detail-strip').innerHTML = `
+    <span>${esc(labelUpper)}</span>
+    <span>·</span>
+    <span>${data.total_shots} shot${data.total_shots === 1 ? "" : "s"}</span>`;
+
+  // Cross-metric narrative ({club} substituted with the readable label)
+  const narrEl = $('#club-narrative-body');
+  if (data.narrative) {
+    narrEl.innerHTML = esc(data.narrative.replace(/\{club\}/g, label));
+    $('#club-narrative-card').classList.remove('hidden');
+  } else {
+    narrEl.textContent = "";
+    $('#club-narrative-card').classList.add('hidden');
+  }
+
+  // Aggregate cards
+  const grid = $('#club-stat-grid');
+  grid.innerHTML = "";
+  const stdDevSuffix = data.carry_std_dev != null
+    ? ` <span class="unit">±${Math.round(data.carry_std_dev)}</span>`
+    : "";
+  const cards = [
+    {
+      eb: "AVG CARRY",
+      num: data.avg_carry != null ? Math.round(data.avg_carry) : "—",
+      unit: "yds",
+      extra: stdDevSuffix,
+    },
+    {
+      eb: "BEST CARRY",
+      num: data.best_carry != null ? Math.round(data.best_carry) : "—",
+      unit: "yds",
+    },
+    {
+      eb: "AVG BALL SPEED",
+      num: data.avg_ball_speed != null ? data.avg_ball_speed.toFixed(1) : "—",
+      unit: "mph",
+    },
+    {
+      eb: "AVG SMASH",
+      num: data.metrics?.smash?.avg != null ? data.metrics.smash.avg.toFixed(2) : "—",
+      unit: "",
+      status: data.metrics?.smash?.status,
+      window: data.benchmarks?.smash,
+    },
+    {
+      eb: "AVG LAUNCH",
+      num: data.metrics?.launch?.avg != null ? data.metrics.launch.avg.toFixed(1) : "—",
+      unit: "deg",
+      status: data.metrics?.launch?.status,
+      window: data.benchmarks?.launch,
+    },
+    {
+      eb: "AVG ATTACK",
+      num: data.metrics?.attack?.avg != null ? fmtSigned(data.metrics.attack.avg, 1) : "—",
+      unit: "deg",
+      status: data.metrics?.attack?.status,
+      window: data.benchmarks?.attack,
+    },
+  ];
+  cards.forEach(c => {
+    const div = document.createElement('div');
+    div.className = 'stat';
+    const badge = c.status && c.status !== "n/a" && c.window
+      ? `<span class="badge ${c.status}">${c.status === "in" ? "in" : (c.status === "above" ? "above" : "below")} ${c.window[0]}–${c.window[1]}</span>`
+      : "";
+    div.innerHTML = `
+      <p class="eyebrow">${esc(c.eb)}</p>
+      <div class="stat-num">${c.num}${c.unit ? ` <span class="unit">${c.unit}</span>` : ""}${c.extra || ""}</div>
+      ${badge}
+    `;
+    grid.appendChild(div);
+  });
+
+  // Individual shots list (newest first)
+  const list = $('#club-shots-list');
+  list.innerHTML = "";
+  data.shots.forEach((shot) => {
+    const row = document.createElement('div');
+    row.className = "shot-row";
+    const t = shot.recorded_at
+      ? new Date(shot.recorded_at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+      : "—";
+    const carry = shot.carry_distance != null ? `${Math.round(shot.carry_distance)} <span class="sr-unit">yds</span>` : "—";
+    const speed = shot.ball_speed != null ? `${shot.ball_speed.toFixed(1)} <span class="sr-unit">mph</span>` : "—";
+    const smashStr = shot.smash != null ? shot.smash.toFixed(2) : "—";
+    row.innerHTML = `
+      <span class="sr-num">#${shot.shot_number}</span>
+      <span class="sr-time">${esc(t)}</span>
+      <span class="sr-metric">${carry}</span>
+      <span class="sr-metric">${speed}</span>
+      <span class="sr-metric">${smashStr}<span class="sr-unit">smash</span></span>
+    `;
+    list.appendChild(row);
+  });
+
+  // Back-label reflects where we came from. If a past booking is pinned
+  // we came in from history; otherwise from the session view.
+  $('#club-back-label').textContent = _pinnedBookingId ? "back to session detail" : "back to session";
+}
+
 // ── WIRING ───────────────────────────────────────────────────
 $$('.tab').forEach(t => {
   t.addEventListener('click', () => {
     // Tab clicks always go to the canonical view of that tab — never
-    // continue showing a history-pinned past session.
+    // continue showing a history-pinned past session OR a club detail.
     _pinnedBookingId = null;
+    _pinnedClub = null;
     loadView(t.dataset.view);
   });
 });
@@ -1762,6 +2002,16 @@ if (_backBtn) {
   _backBtn.addEventListener('click', () => {
     _pinnedBookingId = null;
     loadView('history');
+  });
+}
+
+// Back button on the club-detail view: clear the club pin, return to
+// session view (canonical or pinned-booking, whichever was active).
+const _clubBackBtn = $('#club-back');
+if (_clubBackBtn) {
+  _clubBackBtn.addEventListener('click', () => {
+    _pinnedClub = null;
+    loadView('session');
   });
 }
 
