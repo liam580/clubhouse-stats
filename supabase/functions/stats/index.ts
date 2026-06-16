@@ -43,12 +43,13 @@ interface SessionMeta {
 
 interface HeroBlock {
   selected_club: "all" | string;
-  best_carry: number | null;
+  avg_carry: number | null;                      // headline carry — mean across filtered shots
+  best_carry: number | null;                     // retained for back-compat; still useful in by-club
   best_carry_club: string | null;
   total_carry: number | null;
   total_shots: number;
   sparkline_max_carry: number[];                 // last 6 sessions of max carry
-  delta_vs_previous_session: number | null;      // best_carry delta vs prev session
+  delta_vs_previous_session: number | null;      // avg_carry delta vs prev session
 }
 
 interface StatWithDelta {
@@ -411,24 +412,40 @@ interface ClubBench {
   attack: [number, number];   // attack angle window (degrees; sign matters)
 }
 
+// Smash windows aligned to published PGA Tour averages (per the Practical Golf /
+// Rapsodo / Tee It Up tables): each window = [Good-Range lower bound, Elite/Tour
+// upper bound]. Iron/wedge values exceeding the upper bound are themselves a
+// flag — they typically indicate strong-lofted "game improvement" irons, hot
+// faces, or delofting at impact — so we WATCH that direction too (handled in
+// generateCandidates). For a driver, 1.50 is the USGA legal ceiling; nothing
+// above is physically possible without a calibration error.
 function clubBenchmark(club: string | null): ClubBench | null {
   if (!club) return null;
   const c = club.toUpperCase();
-  if (c === "DRIVER") return { smash: [1.46, 1.50], launch: [12, 17], attack: [2, 5] };
-  if (c.startsWith("WOOD")) return { smash: [1.44, 1.48], launch: [11, 15], attack: [-1, 2] };
+  if (c === "DRIVER") return { smash: [1.45, 1.50], launch: [12, 17], attack: [2, 5] };
+  if (c.startsWith("WOOD")) return { smash: [1.42, 1.48], launch: [11, 15], attack: [-1, 2] };
   if (c.startsWith("HYBRID") || c === "IRON3" || c === "IRON4" || c === "IRON5") {
-    return { smash: [1.40, 1.44], launch: [16, 21], attack: [-4, -2] };
+    return { smash: [1.36, 1.44], launch: [16, 21], attack: [-4, -2] };
   }
   if (c === "IRON6" || c === "IRON7" || c === "IRON8") {
-    return { smash: [1.36, 1.40], launch: [18, 23], attack: [-5, -3] };
+    return { smash: [1.30, 1.38], launch: [18, 23], attack: [-5, -3] };
   }
   if (c === "IRON9" || c === "PW") {
-    return { smash: [1.30, 1.36], launch: [24, 30], attack: [-6, -4] };
+    return { smash: [1.23, 1.32], launch: [24, 30], attack: [-6, -4] };
   }
   if (c === "GW" || c === "SW" || c === "LW" || c === "WEDGE") {
-    return { smash: [1.20, 1.28], launch: [28, 34], attack: [-8, -5] };
+    return { smash: [1.10, 1.25], launch: [28, 34], attack: [-8, -5] };
   }
   return null;
+}
+
+// Whether the club is "irons or wedges" — these have an upper smash bound
+// where exceeding it is itself a signal (delofting / hot face / strong lofts),
+// unlike driver where higher is unambiguously better up to 1.50.
+function isIronOrWedge(club: string): boolean {
+  const c = club.toUpperCase();
+  return c.startsWith("HYBRID") || c.startsWith("IRON") ||
+    c === "PW" || c === "GW" || c === "SW" || c === "LW" || c === "WEDGE";
 }
 
 interface PerClubAgg {
@@ -560,7 +577,7 @@ function generateCandidates(agg: PerClubAgg, bench: ClubBench): Candidate[] {
     }
   }
 
-  // Smash >0.10 below window low
+  // Smash >0.10 below window low — off-center / energy-leaking contact
   if (agg.avgSmash != null) {
     const [lo, hi] = bench.smash;
     const gap = lo - agg.avgSmash;
@@ -570,6 +587,24 @@ function generateCandidates(agg: PerClubAgg, bench: ClubBench): Candidate[] {
         club: c,
         text: `{club} smash factor ${agg.avgSmash.toFixed(2)} across ${n} shots — well below the ${lo.toFixed(2)}–${hi.toFixed(2)} benchmark.`,
         score: 0.70 + Math.min(0.30, gap),
+      });
+    }
+  }
+
+  // Iron/wedge smash ABOVE the tour-elite upper bound. Cited cause profile
+  // (per PGA Tour data tables): strong-lofted "game improvement" irons, a
+  // hot/active face, or delofting the club at impact. None of these are
+  // judgment calls about the player — they're the known mechanisms that
+  // produce a smash factor above tour elite on an iron or wedge.
+  if (agg.avgSmash != null && isIronOrWedge(c)) {
+    const [lo, hi] = bench.smash;
+    const over = agg.avgSmash - hi;
+    if (over > 0.02) {
+      out.push({
+        kind: "watch",
+        club: c,
+        text: `{club} smash factor ${agg.avgSmash.toFixed(2)} across ${n} shots — above the ${lo.toFixed(2)}–${hi.toFixed(2)} tour-elite window. Common causes: strong-lofted irons, a hot face, or delofting at impact.`,
+        score: 0.85 + Math.min(0.15, over),
       });
     }
   }
@@ -731,6 +766,7 @@ async function shotsForSession(
 interface SessionAggregateRow {
   total_shots: number;
   total_carry: number | null;
+  avg_carry: number | null;
   best_carry: number | null;
   best_carry_club: string | null;
   ball_speed_avg: number | null;
@@ -843,6 +879,7 @@ function aggregateShots(
   return {
     total_shots: filtered.length,
     total_carry: sumOrNull(carryVals),
+    avg_carry: mean(carryVals),
     best_carry: bestCarry,
     best_carry_club: bestCarryClub,
     ball_speed_avg: mean(ballSpeedVals),
@@ -1060,6 +1097,7 @@ function emptySessionResponse(
     session: null,
     hero: {
       selected_club: club === "all" ? "all" : club,
+      avg_carry: null,
       best_carry: null,
       best_carry_club: null,
       total_carry: null,
@@ -1206,12 +1244,13 @@ async function handleSession(
     },
     hero: {
       selected_club: club === "all" ? "all" : club,
+      avg_carry: round1(agg.avg_carry),
       best_carry: round1(agg.best_carry),
       best_carry_club: agg.best_carry_club,
       total_carry: round0(agg.total_carry),
       total_shots: totalShots,
       sparkline_max_carry: sparkline,
-      delta_vs_previous_session: safeDelta(agg.best_carry, prevAgg?.best_carry ?? null),
+      delta_vs_previous_session: safeDelta(agg.avg_carry, prevAgg?.avg_carry ?? null),
     },
     stats: {
       ball_speed: {

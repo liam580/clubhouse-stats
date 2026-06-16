@@ -712,7 +712,7 @@
       <div class="stat-grid" id="stat-grid"></div>
 
       <p class="eyebrow dim">BY CLUB</p>
-      <h3 class="section-title">your bag, tonight</h3>
+      <h3 class="section-title">your bag</h3>
       <div id="club-rows"></div>
 
       <div class="divider"></div>
@@ -820,12 +820,13 @@ const __MOCK_DATA__ = (() => {
       },
       hero: {
         selected_club: "all",
+        avg_carry: 156,
         best_carry: 248,
         best_carry_club: "DRIVER",
         total_carry: 7321,
         total_shots: 47,
         sparkline_max_carry: [212, 225, 218, 231, 224, 241, 248],
-        delta_vs_previous_session: 7
+        delta_vs_previous_session: 4
       },
       stats: {
         ball_speed:   { avg: 132.7, delta: 3.3 },
@@ -1194,22 +1195,31 @@ function renderHero(s) {
     ? "ALL CLUBS"
     : (filt === "__unknown__" ? "UNKNOWN" : clubLabel(filt).toUpperCase());
 
-  $('#hero-eyebrow').textContent = `BEST CARRY · ${filtLabel}`;
+  $('#hero-eyebrow').textContent = `AVG CARRY · ${filtLabel}`;
 
   // For the "all" filter, trust the server's hero block exactly.
-  // For per-club filters (client-only scoping), derive best/total from by_club.
-  let bestCarry, totalCarry, shotCount;
+  // For per-club filters (client-only scoping), derive avg from by_club.
+  let avgCarry, shotCount;
   if (isAll) {
-    bestCarry  = hero.best_carry;
-    totalCarry = hero.total_carry;  // trust server; no client recompute
-    shotCount  = hero.total_shots ?? 0;
+    avgCarry  = hero.avg_carry;
+    shotCount = hero.total_shots ?? 0;
   } else {
-    bestCarry  = scope.reduce((m,c) => Math.max(m, c.max_carry || 0), 0) || null;
-    totalCarry = null; // not available without server recompute — render em-dash
-    shotCount  = scope.reduce((a,c) => a + c.shots, 0);
+    // Per-club: avg = sum-of-(avg_carry * shots) / sum-of-shots, weighted.
+    const totals = scope.reduce(
+      (acc, c) => {
+        if (c.avg_carry != null && c.shots > 0) {
+          acc.weighted += c.avg_carry * c.shots;
+          acc.count += c.shots;
+        }
+        return acc;
+      },
+      { weighted: 0, count: 0 },
+    );
+    avgCarry  = totals.count > 0 ? totals.weighted / totals.count : null;
+    shotCount = scope.reduce((a, c) => a + c.shots, 0);
   }
 
-  $('#hero-num').textContent = bestCarry == null ? "—" : Math.round(bestCarry);
+  $('#hero-num').textContent = avgCarry == null ? "—" : Math.round(avgCarry);
 
   // Delta pill — only on the "all" filter; comes straight from server.
   const deltaEl = $('#hero-delta');
