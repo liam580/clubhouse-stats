@@ -164,6 +164,15 @@
     margin: 0 -18px 18px;
     padding: 0 18px 6px;
     scrollbar-width: none;
+    /* Right-edge fade hints that more chips exist beyond the visible edge.
+       JS toggles the .at-end class once the user scrolls all the way right
+       so the fade disappears when there's nothing more to reveal. */
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+            mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  }
+  .chip-row.at-end {
+    -webkit-mask-image: none;
+            mask-image: none;
   }
   .chip-row::-webkit-scrollbar { display: none; }
   .chip {
@@ -284,6 +293,10 @@
     margin-bottom: 18px;
   }
   @media (max-width: 360px) { .stat-grid { grid-template-columns: 1fr; } }
+  /* Trailing odd-count card spans both columns so it never sits alone in
+     the left cell of an otherwise empty row. */
+  .stat-grid > .stat-card:last-child:nth-child(odd),
+  .stat-grid > .stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .stat-card {
     background: var(--green2);
     border: 1px solid var(--thin);
@@ -430,6 +443,34 @@
     font-style: italic;
     text-transform: none;
   }
+  /* Player BEST CLUBS variant — smash + badge live inline on the headline
+     row, while shots + carry-avg drop to a quieter meta line below. Stable
+     numeric widths via tabular-nums so columns don't jitter row-to-row. */
+  .player-club-row .club-carry {
+    font-variant-numeric: tabular-nums;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    white-space: nowrap;
+  }
+  .player-club-row .club-unit {
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 10px;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .player-club-row .club-meta {
+    margin-top: 4px;
+    padding-left: 36px;
+    font-size: 11px;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
 
   /* ── HERO: CLUB OF THE DAY VARIANT ───────────────────────── */
   /* When the session view's hero is showing "Club of the Day" instead
@@ -456,7 +497,10 @@
   }
 
   /* ── CLUB DETAIL ─────────────────────────────────────────── */
-  .stat .badge {
+  /* Status-window badge — used inside .stat-card (club detail + time-of-day)
+     AND on the player BEST CLUBS rows. Generic .badge rule so it picks up
+     in/above/below color tokens wherever it lands. */
+  .badge {
     display: inline-block;
     margin-top: 6px;
     font-family: 'Bai Jamjuree', system-ui, sans-serif;
@@ -467,10 +511,29 @@
     padding: 2px 6px;
     border-radius: 4px;
     border: 1px solid rgba(237, 228, 207, 0.18);
+    vertical-align: middle;
   }
-  .stat .badge.in    { color: var(--blue);    border-color: rgba(182, 211, 223, 0.4); }
-  .stat .badge.above { color: var(--maroon2); border-color: rgba(122, 39, 39, 0.45); }
-  .stat .badge.below { color: var(--maroon2); border-color: rgba(122, 39, 39, 0.45); }
+  .badge.in    { color: var(--blue);    border-color: rgba(182, 211, 223, 0.4); }
+  .badge.above { color: var(--maroon2); border-color: rgba(122, 39, 39, 0.45); }
+  .badge.below { color: var(--maroon2); border-color: rgba(122, 39, 39, 0.45); }
+  /* Time-of-day cards — 3 columns at ~110px each can't fit the wide eyebrow
+     letter-spacing or the 36px Anton "1.43 smash" without overflow; tighten
+     here so all three columns stay aligned and contained. min-width:0 lets
+     the grid items actually shrink to their column. */
+  .tod-card {
+    min-width: 0;
+    padding: 12px;
+  }
+  .tod-card .stat-eyebrow { letter-spacing: 1.8px; white-space: nowrap; overflow: hidden; text-overflow: clip; }
+  .tod-card .stat-num { font-size: 26px; }
+  .tod-card .stat-numwrap { flex-wrap: wrap; gap: 4px; }
+  .tod-card .tod-meta {
+    margin: 6px 0 0;
+    font-size: 11px;
+    color: var(--dim);
+    line-height: 1.35;
+    word-spacing: -1px;
+  }
   .shot-row {
     display: grid;
     grid-template-columns: auto 1fr auto auto auto;
@@ -620,9 +683,13 @@
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
     margin-bottom: 14px;
   }
+  /* Pill drops onto its own row beneath the eyebrow/number when the head
+     can't fit both on one line — keeps the eyebrow on a single line. */
+  .trend-head > .delta-pill { margin-left: auto; }
   .trend-current {
     display: flex; align-items: baseline; gap: 6px;
   }
@@ -1233,7 +1300,9 @@ function clubShort(c) {
   return map[c] || c.slice(0,2);
 }
 
-// Render a labeled "vs previous session" pill from a delta value.
+// Render a delta pill from a delta value. The "vs previous session" framing
+// is conveyed by the trend chart immediately below the pill, so the pill
+// text stays compact — just arrow + value + unit (e.g. "↑ +7 yds").
 function deltaPillHTML(delta, digits=0, unit="") {
   if (delta == null) return "";
   const epsilon = digits === 0 ? 0.5 : Math.pow(10, -digits)/2;
@@ -1242,8 +1311,8 @@ function deltaPillHTML(delta, digits=0, unit="") {
   const arrow = up ? "↑ +" : "↓ ";
   const cls = up ? "up" : "down";
   const abs = Math.abs(delta).toFixed(digits);
-  const unitSpace = unit ? ` ${unit}` : "";
-  return `<span class="delta-pill ${cls}">${arrow}${abs}${unitSpace} vs previous session</span>`;
+  const unitSpace = unit ? ` ${unit.trim()}` : "";
+  return `<span class="delta-pill ${cls}">${arrow}${abs}${unitSpace}</span>`;
 }
 
 function deltaText(delta, digits=0, unit="") {
@@ -1393,6 +1462,23 @@ function renderSessionChips(s) {
   mk("all clubs", "all");
   named.forEach(c => mk(clubLabel(c.club), c.club));
   if (hasUnknown) mk("Unknown", "__unknown__", "unknown");
+  wireChipRowFade(wrap);
+}
+
+// Toggle the right-edge fade on a .chip-row element based on scroll position.
+// Removes the mask once the user has scrolled all the way to the right so the
+// final chip isn't dimmed under the fade when there's nothing more to reveal.
+function wireChipRowFade(row) {
+  if (!row || row.__chipFadeWired) return;
+  row.__chipFadeWired = true;
+  const sync = () => {
+    const atEnd = row.scrollLeft + row.clientWidth >= row.scrollWidth - 1;
+    const noOverflow = row.scrollWidth <= row.clientWidth + 1;
+    row.classList.toggle('at-end', atEnd || noOverflow);
+  };
+  row.addEventListener('scroll', sync, { passive: true });
+  // Initial state — defer one frame so layout is settled.
+  requestAnimationFrame(sync);
 }
 
 function renderHero(s) {
@@ -1495,16 +1581,30 @@ function renderHero(s) {
   // modes (it grounds the headline with shot count + longest + most-hit).
   const para = $('#hero-para');
   const tk = s.takeaway || {};
-  const clubsUsed = isAll
-    ? ((s.session?.clubs_used && s.session.clubs_used.length) || (s.by_club || []).filter(c => c.club != null).length)
-    : 1;
 
-  let html = `<span class="accent">${shotCount} shots</span> across ${clubsUsed} club${clubsUsed===1?"":"s"}.`;
-  if (tk.longest_club && tk.longest_carry != null) {
-    html += ` ${esc(clubLabel(tk.longest_club))} carried longest at <span class="accent">${Math.round(tk.longest_carry)} yds</span>.`;
-  }
-  if (tk.most_hit_club && tk.most_hit_shots != null) {
-    html += ` ${esc(clubLabel(tk.most_hit_club))} most-hit — ${tk.most_hit_shots} shots.`;
+  let html;
+  if (isAll) {
+    const clubsUsed = (s.session?.clubs_used && s.session.clubs_used.length) || (s.by_club || []).filter(c => c.club != null).length;
+    html = `<span class="accent">${shotCount} shots</span> across ${clubsUsed} club${clubsUsed===1?"":"s"}.`;
+    if (tk.longest_club && tk.longest_carry != null) {
+      html += ` ${esc(clubLabel(tk.longest_club))} carried longest at <span class="accent">${Math.round(tk.longest_carry)} yds</span>.`;
+    }
+    if (tk.most_hit_club && tk.most_hit_shots != null) {
+      html += ` ${esc(clubLabel(tk.most_hit_club))} most-hit — ${tk.most_hit_shots} shots.`;
+    }
+  } else {
+    // Per-club filter — narrative must stay scoped to the active club, never
+    // reference clubs outside the filter. Pull numbers from the by_club row
+    // for the active filter.
+    const clubName = filt === "__unknown__" ? "unknown" : clubLabel(filt);
+    const row = (s.by_club || []).find(c => filt === "__unknown__" ? c.club == null : c.club === filt);
+    html = `<span class="accent">${shotCount} shots</span> of ${esc(clubName)}.`;
+    if (row && row.max_carry != null) {
+      html += ` Best carry <span class="accent">${Math.round(row.max_carry)} yds</span>.`;
+    }
+    if (row && row.smash_avg != null) {
+      html += ` Avg smash ${row.smash_avg.toFixed(2)}.`;
+    }
   }
   para.innerHTML = html;
 }
@@ -1794,6 +1894,7 @@ function renderTrendsChips(data) {
   };
   mk("all clubs", "all");
   clubs.forEach(c => mk(clubLabel(c.club), c.club));
+  wireChipRowFade(wrap);
 }
 
 function paintTrendsBody(data) {
@@ -2115,13 +2216,20 @@ function renderClubDetail(data) {
   ];
   cards.forEach(c => {
     const div = document.createElement('div');
-    div.className = 'stat';
-    const badge = c.status && c.status !== "n/a" && c.window
-      ? `<span class="badge ${c.status}">${c.status === "in" ? "in" : (c.status === "above" ? "above" : "below")} ${c.window[0]}–${c.window[1]}</span>`
-      : "";
+    div.className = 'stat-card';
+    // Format the benchmark range — use Unicode minus signs and " to " when
+    // either bound is negative so we never render the ambiguous "-5–-3".
+    const fmtN = (n) => n < 0 ? `−${Math.abs(n)}` : `${n}`;
+    let badge = "";
+    if (c.status && c.status !== "n/a" && c.window) {
+      const negRange = c.window[0] < 0 || c.window[1] < 0;
+      const sep = negRange ? " to " : "–";
+      const label = c.status === "in" ? "in" : (c.status === "above" ? "above" : "below");
+      badge = `<span class="badge ${c.status}">${label} ${fmtN(c.window[0])}${sep}${fmtN(c.window[1])}</span>`;
+    }
     div.innerHTML = `
-      <p class="eyebrow">${esc(c.eb)}</p>
-      <div class="stat-num">${c.num}${c.unit ? ` <span class="unit">${c.unit}</span>` : ""}${c.extra || ""}</div>
+      <div class="stat-eyebrow">${esc(c.eb)}</div>
+      <div class="stat-num">${c.num}${c.unit ? ` <span class="stat-unit">${c.unit}</span>` : ""}${c.extra || ""}</div>
       ${badge}
     `;
     grid.appendChild(div);
@@ -2176,23 +2284,27 @@ function renderPlayer(data) {
   } else {
     best.forEach((c) => {
       const row = document.createElement('div');
-      row.className = "club-row";
+      row.className = "club-row player-club-row";
       row.setAttribute('role', 'button');
       row.tabIndex = 0;
       const smashDisp = c.avg_smash != null ? c.avg_smash.toFixed(2) : "—";
       const carryDisp = c.avg_carry != null ? `${Math.round(c.avg_carry)} yd avg` : "";
+      // Inline status badge sits next to the smash number, anchoring the
+      // badge to its parent metric instead of floating below the row.
       const statusBadge = (c.smash_status && c.smash_status !== "n/a")
-        ? `<span class="badge ${c.smash_status}" style="margin-left:8px;">${c.smash_status} smash</span>`
+        ? `<span class="badge ${c.smash_status}" style="margin-left:6px;">${c.smash_status}</span>`
         : "";
+      // Headline row = identity (tag · name) + smash metric + badge + chev.
+      // Shot count + avg carry move to a secondary meta row below so the
+      // club name gets full width on the headline.
       row.innerHTML = `
         <div class="club-row-head">
           <span class="club-tag">${esc(clubShort(c.club))}</span>
           <span class="club-name">${esc(clubLabel(c.club))}</span>
-          <span class="club-carry">${smashDisp}</span>
-          <span class="club-shots">· ${c.shots} shot${c.shots === 1 ? "" : "s"}${carryDisp ? ` · ${carryDisp}` : ""}</span>
+          <span class="club-carry">${smashDisp} <span class="club-unit">smash</span>${statusBadge}</span>
           <span class="club-chev" aria-hidden="true">›</span>
         </div>
-        ${statusBadge ? `<div style="padding:6px 0 0 36px;">${statusBadge}</div>` : ""}
+        <div class="club-meta">${c.shots} shot${c.shots === 1 ? "" : "s"}${carryDisp ? ` · ${carryDisp}` : ""}</div>
       `;
       row.addEventListener('click', () => {
         // Lifetime drill — canonical-session view of that club. _pinnedBookingId
@@ -2266,15 +2378,24 @@ function renderPlayer(data) {
   (tod.buckets || []).forEach((b) => {
     const isBest = b.bucket === tod.best_window;
     const card = document.createElement('div');
-    card.className = "stat";
+    card.className = "stat-card tod-card";
     card.style.position = "relative";
-    if (isBest) card.style.borderColor = "var(--blue)";
+    if (isBest) {
+      card.style.borderColor = "var(--blue)";
+      card.style.borderWidth = "1.5px";
+    }
     const smash = b.avg_smash != null ? b.avg_smash.toFixed(2) : "—";
     const carry = b.avg_carry != null ? `${Math.round(b.avg_carry)} yd avg` : "—";
+    // BEST marker on its own line so the eyebrow always renders single-line
+    // and SMASH baselines stay aligned across all three cards.
     card.innerHTML = `
-      <p class="eyebrow">${esc(b.label.split(" (")[0].toUpperCase())}${isBest ? ' <span style="color:var(--blue);">·  best</span>' : ""}</p>
-      <div class="stat-num">${smash} <span class="unit">smash</span></div>
-      <p style="font-size:11px; color:var(--dim); margin-top:6px;">
+      <div class="stat-eyebrow">${esc(b.label.split(" (")[0].toUpperCase())}</div>
+      ${isBest ? `<div class="stat-eyebrow" style="color:var(--blue);">· BEST</div>` : ""}
+      <div class="stat-numwrap">
+        <div class="stat-num">${smash}</div>
+        <span class="stat-unit">smash</span>
+      </div>
+      <p class="tod-meta">
         ${b.shots} shot${b.shots === 1 ? "" : "s"} · ${carry}
       </p>
     `;
