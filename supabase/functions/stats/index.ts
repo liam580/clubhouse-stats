@@ -181,8 +181,12 @@ interface HistoryResponse {
 }
 
 interface TrendsSeriesPoint {
-  date: string;     // ISO date (yyyy-mm-dd)
+  date: string;             // ISO date (yyyy-mm-dd)
   value: number;
+  // Optix booking id for the session this point came from. Lets the canvas
+  // navigate from a chart point into that session's club-detail view (the
+  // drill-down). Null when the point's underlying session had no booking.
+  booking_id: string | null;
 }
 
 interface TrendsChart {
@@ -1848,10 +1852,11 @@ async function handleTrends(
 
   const clubFilter = club === "all" ? null : club;
 
-  // Last 6 sessions, oldest -> newest.
+  // Last 6 sessions, oldest -> newest. Also grab optix_booking_id so the
+  // canvas can navigate from a chart point into that session's club detail.
   const { data: sessions, error: sessErr } = await sb
     .from("sessions")
-    .select("id, started_at")
+    .select("id, started_at, optix_booking_id")
     .eq("player_id", player.id)
     .order("started_at", { ascending: false })
     .limit(6);
@@ -1860,7 +1865,13 @@ async function handleTrends(
   }
   const ordered = [...(sessions ?? [])].reverse();
 
-  type Point = { date: string; carry: number | null; ball_speed: number | null; smash: number | null };
+  type Point = {
+    date: string;
+    booking_id: string | null;
+    carry: number | null;
+    ball_speed: number | null;
+    smash: number | null;
+  };
   const points: Point[] = [];
 
   for (const sess of ordered) {
@@ -1884,6 +1895,7 @@ async function handleTrends(
       .filter((v): v is number => v != null);
     points.push({
       date: sess.started_at.slice(0, 10),
+      booking_id: (sess as { optix_booking_id?: string | null }).optix_booking_id ?? null,
       carry: mean(carries),     // session avg carry; "max per session" wasn't useful as a trend
       ball_speed: mean(speeds),
       smash: mean(smashes),
@@ -1893,7 +1905,11 @@ async function handleTrends(
   const buildSeries = (key: "carry" | "ball_speed" | "smash"): TrendsChart => {
     const series: TrendsSeriesPoint[] = points
       .filter((p) => p[key] != null)
-      .map((p) => ({ date: p.date, value: Math.round((p[key] as number) * 10) / 10 }));
+      .map((p) => ({
+        date: p.date,
+        value: Math.round((p[key] as number) * 10) / 10,
+        booking_id: p.booking_id,
+      }));
     const current = series.length ? series[series.length - 1].value : null;
     const prev = series.length >= 2 ? series[series.length - 2].value : null;
     return {

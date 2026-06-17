@@ -649,6 +649,13 @@
     text-transform: uppercase;
     color: var(--dim2);
   }
+  .trend-tap-hint {
+    color: var(--blue);
+    opacity: 0.7;
+  }
+  .trend-dot { transition: r 0.12s ease; }
+  .trend-hit:hover + .trend-dot,
+  .trend-hit:focus + .trend-dot { r: 5; }
 
   /* ── GATE / EMPTY / ERROR / LOADING ──────────────────────── */
   .state-card {
@@ -986,34 +993,34 @@ const __MOCK_DATA__ = (() => {
       charts: {
         carry: {
           series: [
-            { date: ymd(daysAgo(21)), value: 205 },
-            { date: ymd(daysAgo(14)), value: 212 },
-            { date: ymd(daysAgo(9)),  value: 218 },
-            { date: ymd(daysAgo(5)),  value: 224 },
-            { date: ymd(daysAgo(2)),  value: 241 },
-            { date: ymd(now.toISOString()), value: 248 }
+            { date: ymd(daysAgo(21)), value: 205, booking_id: "mock-bk-1" },
+            { date: ymd(daysAgo(14)), value: 212, booking_id: "mock-bk-2" },
+            { date: ymd(daysAgo(9)),  value: 218, booking_id: "mock-bk-3" },
+            { date: ymd(daysAgo(5)),  value: 224, booking_id: "mock-bk-4" },
+            { date: ymd(daysAgo(2)),  value: 241, booking_id: "mock-bk-5" },
+            { date: ymd(now.toISOString()), value: 248, booking_id: "mock-bk-6" }
           ],
           current: 248, delta_vs_previous: 7
         },
         ball_speed: {
           series: [
-            { date: ymd(daysAgo(21)), value: 122.1 },
-            { date: ymd(daysAgo(14)), value: 124.3 },
-            { date: ymd(daysAgo(9)),  value: 126.0 },
-            { date: ymd(daysAgo(5)),  value: 128.8 },
-            { date: ymd(daysAgo(2)),  value: 129.4 },
-            { date: ymd(now.toISOString()), value: 132.7 }
+            { date: ymd(daysAgo(21)), value: 122.1, booking_id: "mock-bk-1" },
+            { date: ymd(daysAgo(14)), value: 124.3, booking_id: "mock-bk-2" },
+            { date: ymd(daysAgo(9)),  value: 126.0, booking_id: "mock-bk-3" },
+            { date: ymd(daysAgo(5)),  value: 128.8, booking_id: "mock-bk-4" },
+            { date: ymd(daysAgo(2)),  value: 129.4, booking_id: "mock-bk-5" },
+            { date: ymd(now.toISOString()), value: 132.7, booking_id: "mock-bk-6" }
           ],
           current: 132.7, delta_vs_previous: 3.3
         },
         smash: {
           series: [
-            { date: ymd(daysAgo(21)), value: 1.32 },
-            { date: ymd(daysAgo(14)), value: 1.34 },
-            { date: ymd(daysAgo(9)),  value: 1.36 },
-            { date: ymd(daysAgo(5)),  value: 1.37 },
-            { date: ymd(daysAgo(2)),  value: 1.38 },
-            { date: ymd(now.toISOString()), value: 1.41 }
+            { date: ymd(daysAgo(21)), value: 1.32, booking_id: "mock-bk-1" },
+            { date: ymd(daysAgo(14)), value: 1.34, booking_id: "mock-bk-2" },
+            { date: ymd(daysAgo(9)),  value: 1.36, booking_id: "mock-bk-3" },
+            { date: ymd(daysAgo(5)),  value: 1.37, booking_id: "mock-bk-4" },
+            { date: ymd(daysAgo(2)),  value: 1.38, booking_id: "mock-bk-5" },
+            { date: ymd(now.toISOString()), value: 1.41, booking_id: "mock-bk-6" }
           ],
           current: 1.41, delta_vs_previous: 0.03
         }
@@ -1201,10 +1208,10 @@ function deltaText(delta, digits=0, unit="") {
 
 // ── SVG CHARTS ───────────────────────────────────────────────
 function buildLinePath(points, w, h, padX=0, padY=4) {
-  if (!points || points.length === 0) return { line: "", area: "", lastPt: null };
+  if (!points || points.length === 0) return { line: "", area: "", allPts: [], lastPt: null };
   if (points.length === 1) {
     const x = w/2, y = h/2;
-    return { line: `M${x} ${y}`, area: "", lastPt: { x, y } };
+    return { line: `M${x} ${y}`, area: "", allPts: [{ x, y }], lastPt: { x, y } };
   }
   const min = Math.min(...points);
   const max = Math.max(...points);
@@ -1223,7 +1230,7 @@ function buildLinePath(points, w, h, padX=0, padY=4) {
     d += ` C${cx.toFixed(2)} ${p0.y.toFixed(2)}, ${cx.toFixed(2)} ${p1.y.toFixed(2)}, ${p1.x.toFixed(2)} ${p1.y.toFixed(2)}`;
   }
   const area = `${d} L${coords[coords.length-1].x.toFixed(2)} ${h} L${coords[0].x.toFixed(2)} ${h} Z`;
-  return { line: d, area, lastPt: coords[coords.length-1] };
+  return { line: d, area, allPts: coords, lastPt: coords[coords.length-1] };
 }
 
 function renderSparkline(svg, points, color="var(--blue)") {
@@ -1238,14 +1245,24 @@ function renderSparkline(svg, points, color="var(--blue)") {
 
 function renderLineChart(points, opts={}) {
   const w = opts.w || 380, h = opts.h || 120;
-  const { line, area, lastPt } = buildLinePath(points, w, h, 4, 10);
+  const { line, area, allPts, lastPt } = buildLinePath(points, w, h, 4, 10);
   const stroke = opts.stroke || "var(--cream2)";
   const fill   = opts.areaColor || "rgba(243,236,218,0.06)";
+  const interactive = !!opts.interactive;
+  // When interactive, render a clickable circle per point (larger hit target
+  // via a transparent outer circle), each tagged with its series index so the
+  // caller can map back to the underlying data point.
+  const dots = interactive
+    ? allPts.map((p, i) =>
+        `<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="14" fill="transparent" data-idx="${i}" class="trend-hit" style="cursor:pointer"/>
+         <circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="3.5" fill="${stroke}" data-idx="${i}" class="trend-dot" style="cursor:pointer; pointer-events:none;"/>`
+      ).join("")
+    : (lastPt ? `<circle cx="${lastPt.x.toFixed(2)}" cy="${lastPt.y.toFixed(2)}" r="5" fill="${stroke}"/>` : "");
   return `
-    <svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" aria-hidden="true">
+    <svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" aria-hidden="${interactive ? 'false' : 'true'}">
       <path d="${area}" fill="${fill}" stroke="none"/>
       <path d="${line}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      ${lastPt ? `<circle cx="${lastPt.x.toFixed(2)}" cy="${lastPt.y.toFixed(2)}" r="5" fill="${stroke}"/>` : ""}
+      ${dots}
     </svg>
   `;
 }
@@ -1761,6 +1778,11 @@ function paintTrendsBody(data) {
     { key: 'smash',      label: 'SMASH FACTOR', unit: '',    digits: 2, stroke: 'var(--blue)' }
   ];
 
+  // Drill-down is only meaningful when the user has filtered to a specific
+  // club — "all clubs" points are multi-club averages and tapping into one
+  // wouldn't map to a single club detail view.
+  const drillable = _trendsClubFilter !== "all";
+
   specs.forEach(spec => {
     const chart = charts[spec.key];
     if (!chart || !Array.isArray(chart.series)) return;
@@ -1791,13 +1813,29 @@ function paintTrendsBody(data) {
         </div>
         ${pill}
       </div>
-      ${values.length >= 2 ? renderLineChart(values, { stroke: spec.stroke, h: 110, w: 380 }) : ""}
+      ${values.length >= 2 ? renderLineChart(values, { stroke: spec.stroke, h: 110, w: 380, interactive: drillable }) : ""}
       <div class="trend-xlabels">
         <span>${esc(dates[0] || "")}</span>
+        ${drillable ? `<span class="trend-tap-hint">tap a point</span>` : ""}
         <span>${esc(dates[dates.length-1] || "")}</span>
       </div>
     `;
     body.appendChild(card);
+
+    // Wire chart points to drill into that booking's club-detail view. Only
+    // applies when the trends filter is a specific club (drillable === true).
+    if (drillable) {
+      const series = chart.series;
+      card.querySelectorAll('.trend-hit[data-idx]').forEach(hit => {
+        hit.addEventListener('click', () => {
+          const idx = Number(hit.dataset.idx);
+          const point = series[idx];
+          if (!point || !point.booking_id) return;
+          _pinnedBookingId = point.booking_id;
+          loadClubDetail(_trendsClubFilter);
+        });
+      });
+    }
   });
 }
 
