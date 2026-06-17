@@ -50,6 +50,11 @@ interface HeroBlock {
   total_shots: number;
   sparkline_max_carry: number[];                 // last 6 sessions of max carry
   delta_vs_previous_session: number | null;      // avg_carry delta vs prev session
+  // "Club of the day" — same shape as the takeaway STRENGTH line. When set,
+  // the canvas swaps the AVG-CARRY hero for a big club-name display + the
+  // observation text. Re-uses pickTakeawayObservations so the threshold
+  // logic stays in one place.
+  featured_strength: TakeawayLine | null;
 }
 
 interface StatWithDelta {
@@ -1465,6 +1470,7 @@ function emptySessionResponse(
       total_shots: 0,
       sparkline_max_carry: [],
       delta_vs_previous_session: null,
+      featured_strength: null,
     },
     stats: {
       ball_speed: { avg: null, delta: null },
@@ -1612,6 +1618,7 @@ async function handleSession(
       total_shots: totalShots,
       sparkline_max_carry: sparkline,
       delta_vs_previous_session: safeDelta(agg.avg_carry, prevAgg?.avg_carry ?? null),
+      featured_strength: observations.strength,
     },
     stats: {
       ball_speed: {

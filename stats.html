@@ -431,6 +431,30 @@
     text-transform: none;
   }
 
+  /* ── HERO: CLUB OF THE DAY VARIANT ───────────────────────── */
+  /* When the session view's hero is showing "Club of the Day" instead
+     of the avg-carry number, hide the "yds" unit + sparkline and tighten
+     up the type so a club name like "PITCHING WEDGE" still fits. */
+  #session-hero.hero-mode-club .hero-unit,
+  #session-hero.hero-mode-club .hero-sparkline {
+    display: none !important;
+  }
+  #session-hero.hero-mode-club .hero-num {
+    font-size: clamp(36px, 10vw, 56px);
+    letter-spacing: -1px;
+    line-height: 1;
+  }
+  #session-hero.hero-mode-club .hero-subline {
+    color: var(--cream);
+    opacity: 0.85;
+    font-size: 13px;
+    line-height: 1.5;
+    margin-top: 8px;
+    /* Narrative sentence — drop the uppercase + tracking the avg-carry mode uses */
+    text-transform: none;
+    letter-spacing: 0.2px;
+  }
+
   /* ── CLUB DETAIL ─────────────────────────────────────────── */
   .stat .badge {
     display: inline-block;
@@ -898,7 +922,11 @@ const __MOCK_DATA__ = (() => {
         total_carry: 7321,
         total_shots: 47,
         sparkline_max_carry: [212, 225, 218, 231, 224, 241, 248],
-        delta_vs_previous_session: 4
+        delta_vs_previous_session: 4,
+        featured_strength: {
+          club: "DRIVER",
+          text: "{club} smash factor 1.49 across 14 shots — in the 1.45–1.50 benchmark."
+        }
       },
       stats: {
         ball_speed:   { avg: 132.7, delta: 3.3 },
@@ -1305,66 +1333,99 @@ function renderHero(s) {
   const isAll = filt === "all";
   const hero = s.hero || {};
   const scope = scopedByClub(s);
+  const heroCard = $('#session-hero');
+
+  // "Club of the day" mode — only when the chip filter is "all" AND the
+  // server surfaced a STRENGTH observation. Replaces the avg-carry hero
+  // with a big club-name display + the observation text. Falls back to
+  // the avg-carry render if either condition fails.
+  const featured = isAll && hero.featured_strength && hero.featured_strength.club
+    ? hero.featured_strength
+    : null;
+
+  if (featured) {
+    heroCard.classList.add('hero-mode-club');
+  } else {
+    heroCard.classList.remove('hero-mode-club');
+  }
 
   const filtLabel = isAll
     ? "ALL CLUBS"
     : (filt === "__unknown__" ? "UNKNOWN" : clubLabel(filt).toUpperCase());
 
-  $('#hero-eyebrow').textContent = `AVG CARRY · ${filtLabel}`;
-
-  // For the "all" filter, trust the server's hero block exactly.
-  // For per-club filters (client-only scoping), derive avg from by_club.
-  let avgCarry, shotCount;
+  // Shot count is needed for both modes.
+  let shotCount;
   if (isAll) {
-    avgCarry  = hero.avg_carry;
     shotCount = hero.total_shots ?? 0;
   } else {
-    // Per-club: avg = sum-of-(avg_carry * shots) / sum-of-shots, weighted.
-    const totals = scope.reduce(
-      (acc, c) => {
-        if (c.avg_carry != null && c.shots > 0) {
-          acc.weighted += c.avg_carry * c.shots;
-          acc.count += c.shots;
-        }
-        return acc;
-      },
-      { weighted: 0, count: 0 },
-    );
-    avgCarry  = totals.count > 0 ? totals.weighted / totals.count : null;
     shotCount = scope.reduce((a, c) => a + c.shots, 0);
   }
 
-  $('#hero-num').textContent = avgCarry == null ? "—" : Math.round(avgCarry);
+  if (featured) {
+    // CLUB OF THE DAY mode
+    $('#hero-eyebrow').textContent = "CLUB OF THE DAY";
+    $('#hero-num').textContent = clubLabel(featured.club).toUpperCase();
+    // Drop the "{club}" prefix from the observation text since we're already
+    // showing the club name big. Strip a leading "{club}: " or "{club} ".
+    const detail = featured.text.replace(/^\{club\}[:\s]+/i, "");
+    $('#hero-subline').textContent = detail;
+    $('#hero-delta').classList.add('hidden');
+    $('#hero-spark').style.display = "none";
+  } else {
+    // AVG CARRY mode (current behavior)
+    $('#hero-eyebrow').textContent = `AVG CARRY · ${filtLabel}`;
 
-  // Delta pill — only on the "all" filter; comes straight from server.
-  const deltaEl = $('#hero-delta');
-  if (isAll && hero.delta_vs_previous_session != null) {
-    const dt = deltaText(hero.delta_vs_previous_session, 0, " yds");
-    if (dt) {
-      deltaEl.classList.remove('hidden');
-      deltaEl.classList.toggle('up', dt.up);
-      deltaEl.classList.toggle('down', !dt.up);
-      deltaEl.textContent = dt.text;
+    // For "all": trust server avg_carry; for per-club: weight by shots from by_club.
+    let avgCarry;
+    if (isAll) {
+      avgCarry = hero.avg_carry;
+    } else {
+      const totals = scope.reduce(
+        (acc, c) => {
+          if (c.avg_carry != null && c.shots > 0) {
+            acc.weighted += c.avg_carry * c.shots;
+            acc.count += c.shots;
+          }
+          return acc;
+        },
+        { weighted: 0, count: 0 },
+      );
+      avgCarry = totals.count > 0 ? totals.weighted / totals.count : null;
+    }
+
+    $('#hero-num').textContent = avgCarry == null ? "—" : Math.round(avgCarry);
+
+    // Delta pill — only on the "all" filter; comes straight from server.
+    const deltaEl = $('#hero-delta');
+    if (isAll && hero.delta_vs_previous_session != null) {
+      const dt = deltaText(hero.delta_vs_previous_session, 0, " yds");
+      if (dt) {
+        deltaEl.classList.remove('hidden');
+        deltaEl.classList.toggle('up', dt.up);
+        deltaEl.classList.toggle('down', !dt.up);
+        deltaEl.textContent = dt.text;
+      } else {
+        deltaEl.classList.add('hidden');
+      }
     } else {
       deltaEl.classList.add('hidden');
     }
-  } else {
-    deltaEl.classList.add('hidden');
+
+    // Subline — sum of yardages is meaningless in golf, just show shot count
+    $('#hero-subline').textContent = `${shotCount} shots`;
+
+    // Sparkline — only on "all"
+    const spark = $('#hero-spark');
+    if (isAll && Array.isArray(hero.sparkline_max_carry) && hero.sparkline_max_carry.length >= 2) {
+      spark.style.display = "";
+      renderSparkline(spark, hero.sparkline_max_carry, "var(--blue)");
+    } else {
+      spark.style.display = "none";
+    }
   }
 
-  // Subline — sum of yardages is meaningless in golf, just show shot count
-  $('#hero-subline').textContent = `${shotCount} shots`;
-
-  // Sparkline — only on "all"
-  const spark = $('#hero-spark');
-  if (isAll && Array.isArray(hero.sparkline_max_carry) && hero.sparkline_max_carry.length >= 2) {
-    spark.style.display = "";
-    renderSparkline(spark, hero.sparkline_max_carry, "var(--blue)");
-  } else {
-    spark.style.display = "none";
-  }
-
-  // Factual paragraph — built from server takeaway block (no inferential narrative)
+  // Factual paragraph — built from server takeaway block. Shown in BOTH
+  // modes (it grounds the headline with shot count + longest + most-hit).
   const para = $('#hero-para');
   const tk = s.takeaway || {};
   const clubsUsed = isAll
