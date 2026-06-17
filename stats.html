@@ -117,7 +117,7 @@
     font-size: 10px;
     letter-spacing: 2.8px;
     text-transform: uppercase;
-    color: var(--gold);
+    color: var(--blue);
     margin: 0 0 10px;
   }
   .eyebrow.dim { color: var(--dim); }
@@ -229,7 +229,7 @@
     color: var(--dim);
     white-space: nowrap;
   }
-  .delta-pill.up   { color: var(--gold); border-color: rgba(198,146,72,0.45); }
+  .delta-pill.up   { color: var(--blue); border-color: rgba(182,211,223,0.45); }
   .delta-pill.down { color: var(--cream); border-color: var(--thin2); }
   .hero-numrow {
     display: flex;
@@ -300,7 +300,7 @@
     font-size: 9px;
     letter-spacing: 2.4px;
     text-transform: uppercase;
-    color: var(--gold);
+    color: var(--blue);
   }
   .stat-numwrap {
     display: flex;
@@ -337,7 +337,7 @@
     color: var(--dim);
     text-transform: uppercase;
   }
-  .stat-delta.up { color: var(--gold); }
+  .stat-delta.up { color: var(--blue); }
 
   /* ── PER-CLUB ROWS ───────────────────────────────────────── */
   .section-title {
@@ -370,7 +370,7 @@
     font-weight: 600;
     font-size: 14px;
     letter-spacing: -0.3px;
-    color: var(--gold);
+    color: var(--blue);
     text-transform: uppercase;
     flex: 0 0 auto;
     min-width: 28px;
@@ -484,13 +484,13 @@
     margin-left: 3px;
   }
   #club-narrative-card { margin-bottom: 18px; }
-  #club-narrative-card .eyebrow { color: var(--gold); margin-bottom: 8px; }
+  #club-narrative-card .eyebrow { color: var(--blue); margin-bottom: 8px; }
   #club-narrative-card .hero-para { font-size: 14px; line-height: 1.6; color: var(--cream); }
 
   /* ── TAKEAWAY ────────────────────────────────────────────── */
   .takeaway-eb {
     display: flex; align-items: center; gap: 6px;
-    color: var(--gold);
+    color: var(--blue);
     font-family: 'Bai Jamjuree', system-ui, sans-serif;
     font-weight: 400;
     font-size: 10px;
@@ -499,7 +499,7 @@
     margin-bottom: 10px;
   }
   .takeaway-eb .star {
-    color: var(--gold);
+    color: var(--blue);
     font-size: 14px;
     line-height: 1;
   }
@@ -574,7 +574,7 @@
     font-size: 10px;
     letter-spacing: 2.5px;
     text-transform: uppercase;
-    color: var(--gold);
+    color: var(--blue);
     margin-top: 4px;
   }
   .hc-meta { font-size: 13px; color: var(--cream); line-height: 1.45; }
@@ -690,7 +690,7 @@
   button:focus-visible,
   [role="button"]:focus-visible,
   [tabindex]:focus-visible {
-    outline: 2px solid var(--gold);
+    outline: 2px solid var(--blue);
     outline-offset: 2px;
     border-radius: inherit;
   }
@@ -751,7 +751,7 @@
 
       <article id="session-hero" class="card maroon-edge hero">
         <div class="hero-top">
-          <p class="eyebrow" id="hero-eyebrow">BEST CARRY · ALL CLUBS</p>
+          <p class="eyebrow" id="hero-eyebrow">AVG CARRY · ALL CLUBS</p>
           <span id="hero-delta" class="delta-pill hidden"></span>
         </div>
         <div class="hero-numrow">
@@ -1000,17 +1000,20 @@ const __MOCK_DATA__ = (() => {
       carry_std_dev: 8.3,
       avg_ball_speed: 124.3,
       avg_club_speed: 88.8,
+      avg_total_spin: 6420,
       metrics: {
         smash:  { avg: 1.40, status: "above" },
         launch: { avg: 18.7, status: "in" },
-        attack: { avg: -4.2, status: "in" }
+        attack: { avg: -4.2, status: "in" },
+        spin:   { avg: 6420, status: "in" }
       },
       benchmarks: {
         smash:  [1.30, 1.38],
         launch: [18, 23],
-        attack: [-5, -3]
+        attack: [-5, -3],
+        spin:   [5500, 7500]
       },
-      narrative: "{club}: 162 yd avg carry · 124.3 mph avg ball speed · smash 1.40. Smash above the 1.30–1.38 tour-elite window — typical of strong-lofted irons, a hot face, or delofting at impact.",
+      narrative: "{club}: 162 yd avg carry · 124.3 mph avg ball speed · smash 1.40 · 6420 rpm spin. Smash above the 1.30–1.38 tour-elite window — typical of strong-lofted irons, a hot face, or delofting at impact.",
       shots: Array.from({ length: 17 }, (_, i) => ({
         shot_number: i + 1,
         recorded_at: minutesAgo(8 + i * 4),
@@ -1020,6 +1023,7 @@ const __MOCK_DATA__ = (() => {
         vla: 18.1 + (i % 5) * 0.3,
         smash: 1.40 + (i % 3) * 0.005,
         attack_angle: -4.1 + (i % 4) * 0.2,
+        total_spin: 6300 + (i % 5) * 60,
         club_path: 0.8 + (i % 3) * 0.3,
         face_to_target: -0.4 + (i % 4) * 0.2,
         face_to_path: -1.2 + (i % 4) * 0.15
@@ -1194,7 +1198,7 @@ function buildLinePath(points, w, h, padX=0, padY=4) {
   return { line: d, area, lastPt: coords[coords.length-1] };
 }
 
-function renderSparkline(svg, points, color="var(--gold)") {
+function renderSparkline(svg, points, color="var(--blue)") {
   const w = svg.viewBox.baseVal.width || 110;
   const h = svg.viewBox.baseVal.height || 38;
   const { line, lastPt } = buildLinePath(points, w, h, 2, 4);
@@ -1355,7 +1359,7 @@ function renderHero(s) {
   const spark = $('#hero-spark');
   if (isAll && Array.isArray(hero.sparkline_max_carry) && hero.sparkline_max_carry.length >= 2) {
     spark.style.display = "";
-    renderSparkline(spark, hero.sparkline_max_carry, "var(--gold)");
+    renderSparkline(spark, hero.sparkline_max_carry, "var(--blue)");
   } else {
     spark.style.display = "none";
   }
@@ -1620,7 +1624,7 @@ function renderHistory(data) {
     list.appendChild(card);
     const svg = card.querySelector('svg');
     if (s.sparkline && s.sparkline.length >= 2) {
-      renderSparkline(svg, s.sparkline, "var(--gold)");
+      renderSparkline(svg, s.sparkline, "var(--blue)");
     }
     card.addEventListener('click', () => {
       _pinnedBookingId = s.booking_id;
@@ -1691,9 +1695,9 @@ function paintTrendsBody(data) {
 
   const charts = data.charts || {};
   const specs = [
-    { key: 'carry',      label: 'CARRY',        unit: 'yds', digits: 0, stroke: 'var(--cream)' },
+    { key: 'carry',      label: 'AVG CARRY',    unit: 'yds', digits: 0, stroke: 'var(--cream)' },
     { key: 'ball_speed', label: 'BALL SPEED',   unit: 'mph', digits: 1, stroke: 'rgba(237, 228, 207, 0.55)' },
-    { key: 'smash',      label: 'SMASH FACTOR', unit: '',    digits: 2, stroke: 'var(--gold)' }
+    { key: 'smash',      label: 'SMASH FACTOR', unit: '',    digits: 2, stroke: 'var(--blue)' }
   ];
 
   specs.forEach(spec => {
@@ -1873,6 +1877,10 @@ async function loadClubDetail(clubKey) {
     }
     renderClubDetail(data);
     showView('club');
+    // Jump to the top of the new view — otherwise iOS retains the scroll
+    // position from the BY CLUB row the user tapped, landing them at the
+    // bottom of the club page.
+    window.scrollTo({ top: 0, behavior: 'instant' });
   } catch (err) {
     console.error('[clubhouse:stats] club detail load failed', err);
     showError(err);
@@ -1942,6 +1950,13 @@ function renderClubDetail(data) {
       unit: "deg",
       status: data.metrics?.attack?.status,
       window: data.benchmarks?.attack,
+    },
+    {
+      eb: "AVG SPIN",
+      num: data.metrics?.spin?.avg != null ? Math.round(data.metrics.spin.avg).toLocaleString() : "—",
+      unit: "rpm",
+      status: data.metrics?.spin?.status,
+      window: data.benchmarks?.spin,
     },
   ];
   cards.forEach(c => {

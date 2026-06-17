@@ -128,6 +128,7 @@ interface ClubDetailShot {
   vla: number | null;
   smash: number | null;
   attack_angle: number | null;
+  total_spin: number | null;
   club_path: number | null;
   face_to_target: number | null;
   face_to_path: number | null;
@@ -142,15 +143,18 @@ interface ClubDetailResponse {
   carry_std_dev: number | null;
   avg_ball_speed: number | null;
   avg_club_speed: number | null;
+  avg_total_spin: number | null;
   metrics: {
     smash: ClubMetric;
     launch: ClubMetric;
     attack: ClubMetric;
+    spin: ClubMetric;
   };
   benchmarks: {
     smash: [number, number] | null;
     launch: [number, number] | null;
     attack: [number, number] | null;
+    spin: [number, number] | null;
   };
   narrative: string | null;     // {club} placeholder substituted client-side
   shots: ClubDetailShot[];      // newest-first
@@ -456,6 +460,7 @@ interface ClubBench {
   smash: [number, number];    // efficiency window
   launch: [number, number];   // vertical launch angle window (degrees)
   attack: [number, number];   // attack angle window (degrees; sign matters)
+  spin: [number, number];     // total spin window (RPM)
 }
 
 // Smash windows aligned to published PGA Tour averages (per the Practical Golf /
@@ -468,19 +473,26 @@ interface ClubBench {
 function clubBenchmark(club: string | null): ClubBench | null {
   if (!club) return null;
   const c = club.toUpperCase();
-  if (c === "DRIVER") return { smash: [1.45, 1.50], launch: [12, 17], attack: [2, 5] };
-  if (c.startsWith("WOOD")) return { smash: [1.42, 1.48], launch: [11, 15], attack: [-1, 2] };
+  // Spin windows (RPM) cited across launch-monitor literature:
+  //   driver       2200–2800   (low spin = max distance for given launch)
+  //   3-wood       3000–3500
+  //   hybrid/long  4500–6000
+  //   mid iron     5500–7500   (7i ~6000–7000 per the Gemini PDF)
+  //   9i/PW        8000–10000
+  //   wedge        9000–12000  (spin is the whole point on scoring clubs)
+  if (c === "DRIVER") return { smash: [1.45, 1.50], launch: [12, 17], attack: [2, 5],   spin: [2200, 2800] };
+  if (c.startsWith("WOOD")) return { smash: [1.42, 1.48], launch: [11, 15], attack: [-1, 2], spin: [3000, 3500] };
   if (c.startsWith("HYBRID") || c === "IRON3" || c === "IRON4" || c === "IRON5") {
-    return { smash: [1.36, 1.44], launch: [16, 21], attack: [-4, -2] };
+    return { smash: [1.36, 1.44], launch: [16, 21], attack: [-4, -2], spin: [4500, 6000] };
   }
   if (c === "IRON6" || c === "IRON7" || c === "IRON8") {
-    return { smash: [1.30, 1.38], launch: [18, 23], attack: [-5, -3] };
+    return { smash: [1.30, 1.38], launch: [18, 23], attack: [-5, -3], spin: [5500, 7500] };
   }
   if (c === "IRON9" || c === "PW") {
-    return { smash: [1.23, 1.32], launch: [24, 30], attack: [-6, -4] };
+    return { smash: [1.23, 1.32], launch: [24, 30], attack: [-6, -4], spin: [8000, 10000] };
   }
   if (c === "GW" || c === "SW" || c === "LW" || c === "WEDGE") {
-    return { smash: [1.10, 1.25], launch: [28, 34], attack: [-8, -5] };
+    return { smash: [1.10, 1.25], launch: [28, 34], attack: [-8, -5], spin: [9000, 12000] };
   }
   return null;
 }
@@ -500,6 +512,7 @@ interface PerClubAgg {
   avgSmash: number | null;
   avgLaunch: number | null;
   avgAttack: number | null;
+  avgSpin: number | null;
   ballSpeedStdDev: number | null;
   carryStdDev: number | null;
 }
@@ -517,6 +530,7 @@ function aggregatePerClub(shots: ShotRow[]): PerClubAgg[] {
     const smashes = list.map((s) => s.smash).filter((v): v is number => v != null);
     const launches = list.map((s) => s.vla).filter((v): v is number => v != null);
     const attacks = list.map((s) => s.attack_angle).filter((v): v is number => v != null);
+    const spins = list.map((s) => s.total_spin).filter((v): v is number => v != null);
     const speeds = list.map((s) => s.ball_speed).filter((v): v is number => v != null);
     const carries = list.map((s) => s.carry_distance).filter((v): v is number => v != null);
     out.push({
@@ -525,6 +539,7 @@ function aggregatePerClub(shots: ShotRow[]): PerClubAgg[] {
       avgSmash: mean(smashes),
       avgLaunch: mean(launches),
       avgAttack: mean(attacks),
+      avgSpin: mean(spins),
       ballSpeedStdDev: stdDev(speeds),
       carryStdDev: stdDev(carries),
     });
@@ -685,6 +700,48 @@ function generateCandidates(agg: PerClubAgg, bench: ClubBench): Candidate[] {
     });
   }
 
+  // Spin in window → STRENGTH; meaningfully outside → WATCH with context.
+  if (agg.avgSpin != null) {
+    const [lo, hi] = bench.spin;
+    const v = agg.avgSpin;
+    if (v >= lo && v <= hi) {
+      const center = (lo + hi) / 2;
+      const halfWidth = Math.max(1, (hi - lo) / 2);
+      const proximity = 1 - Math.abs(v - center) / halfWidth;
+      out.push({
+        kind: "strength",
+        club: c,
+        text: `{club} spin ${Math.round(v)} rpm avg across ${n} shots — in the ${lo}–${hi} window.`,
+        score: 0.60 + proximity * 0.20,
+      });
+    } else if (v < lo) {
+      // Below window
+      const ironLike = isIronOrWedge(c);
+      const consequence = ironLike
+        ? " — ball won't hold a green from approach"
+        : " — flatter, longer-rolling flight";
+      out.push({
+        kind: "watch",
+        club: c,
+        text: `{club} spin ${Math.round(v)} rpm avg across ${n} shots — below the ${lo}–${hi} window${consequence}.`,
+        score: 0.70,
+      });
+    } else {
+      // Above window
+      const ironLike = isIronOrWedge(c);
+      const isDriver = c.toUpperCase() === "DRIVER";
+      let consequence = "";
+      if (isDriver) consequence = " — distance lost to lift, ball climbs and falls short";
+      else if (ironLike) consequence = " — ballooning flight, shorter carry than ball speed implies";
+      out.push({
+        kind: "watch",
+        club: c,
+        text: `{club} spin ${Math.round(v)} rpm avg across ${n} shots — above the ${lo}–${hi} window${consequence}.`,
+        score: 0.75,
+      });
+    }
+  }
+
   return out;
 }
 
@@ -719,6 +776,7 @@ interface ShotRow {
   vla: number | null;
   smash: number | null;
   attack_angle: number | null;
+  total_spin: number | null;
   club_path: number | null;
   face_to_target: number | null;
   face_to_path: number | null;
@@ -735,7 +793,7 @@ async function shotsForSessionIds(
   const { data, error } = await sb
     .from("shots")
     .select(
-      "club, carry_distance, ball_speed, vla, club_speed, attack_angle, face_to_target, path, recorded_at",
+      "club, carry_distance, ball_speed, vla, club_speed, attack_angle, total_spin, face_to_target, path, recorded_at",
     )
     .in("session_id", sessionIds);
   if (error) {
@@ -756,6 +814,7 @@ async function shotsForSessionIds(
         ? ballSpeed / clubSpeed
         : null,
       attack_angle: (r.attack_angle as number | null) ?? null,
+      total_spin: (r.total_spin as number | null) ?? null,
       club_path: path ?? null,
       face_to_target: faceToTarget ?? null,
       face_to_path: faceToTarget != null && path != null
@@ -778,7 +837,7 @@ async function shotsForSession(
   const { data, error } = await sb
     .from("shots")
     .select(
-      "club, carry_distance, ball_speed, vla, club_speed, attack_angle, face_to_target, path, recorded_at",
+      "club, carry_distance, ball_speed, vla, club_speed, attack_angle, total_spin, face_to_target, path, recorded_at",
     )
     .eq("session_id", sessionId);
   if (error) {
@@ -799,6 +858,7 @@ async function shotsForSession(
         ? ballSpeed / clubSpeed
         : null,
       attack_angle: (r.attack_angle as number | null) ?? null,
+      total_spin: (r.total_spin as number | null) ?? null,
       club_path: path ?? null,
       face_to_target: faceToTarget ?? null,
       face_to_path: faceToTarget != null && path != null
@@ -822,7 +882,7 @@ async function shotsForClubAcrossSessions(
   const { data, error } = await sb
     .from("shots")
     .select(
-      "carry_distance, ball_speed, vla, club_speed, attack_angle, face_to_target, path, recorded_at",
+      "carry_distance, ball_speed, vla, club_speed, attack_angle, total_spin, face_to_target, path, recorded_at",
     )
     .in("session_id", sessionIds)
     .eq("club", club)
@@ -847,6 +907,7 @@ async function shotsForClubAcrossSessions(
         ? ballSpeed / clubSpeed
         : null,
       attack_angle: (r.attack_angle as number | null) ?? null,
+      total_spin: (r.total_spin as number | null) ?? null,
       club_path: path ?? null,
       face_to_target: faceToTarget ?? null,
       face_to_path: faceToTarget != null && path != null
@@ -879,17 +940,20 @@ function buildClubNarrative(
   avgSmash: number | null,
   launchStatus: "in" | "above" | "below" | "n/a",
   avgLaunch: number | null,
+  spinStatus: "in" | "above" | "below" | "n/a",
+  avgSpin: number | null,
   totalShots: number,
 ): string | null {
   if (totalShots < 3) return null;
   if (avgCarry == null && avgBallSpeed == null && avgSmash == null) return null;
 
   const parts: string[] = [];
-  // Lead with carry + ball speed + smash since they ground the rest.
+  // Lead with carry + ball speed + smash + spin since they ground the rest.
   const carryFrag = avgCarry != null ? `${Math.round(avgCarry)} yd avg carry` : null;
   const speedFrag = avgBallSpeed != null ? `${avgBallSpeed.toFixed(1)} mph avg ball speed` : null;
   const smashFrag = avgSmash != null ? `smash ${avgSmash.toFixed(2)}` : null;
-  const lead = [carryFrag, speedFrag, smashFrag].filter(Boolean).join(" · ");
+  const spinFrag  = avgSpin  != null ? `${Math.round(avgSpin)} rpm spin` : null;
+  const lead = [carryFrag, speedFrag, smashFrag, spinFrag].filter(Boolean).join(" · ");
   if (lead) parts.push(`{club}: ${lead}.`);
 
   // Smash interpretation (factual, benchmark-anchored).
@@ -916,6 +980,28 @@ function buildClubNarrative(
     }
   }
 
+  // Spin interpretation. Above-window on driver → distance loss; below on
+  // irons/wedges → won't hold a green; above on irons/wedges → ballooning.
+  if (bench && spinStatus !== "n/a" && spinStatus !== "in" && avgSpin != null) {
+    const [lo, hi] = bench.spin;
+    const c = club.toUpperCase();
+    if (spinStatus === "below") {
+      if (isIronOrWedge(c)) {
+        parts.push(`Spin ${Math.round(avgSpin)} rpm is below the ${lo}–${hi} window — ball won't hold a green from approach.`);
+      } else {
+        parts.push(`Spin ${Math.round(avgSpin)} rpm is below the ${lo}–${hi} window — flatter, longer-rolling flight.`);
+      }
+    } else {
+      if (c === "DRIVER") {
+        parts.push(`Spin ${Math.round(avgSpin)} rpm is above the ${lo}–${hi} window — distance lost to lift, ball climbs and falls short.`);
+      } else if (isIronOrWedge(c)) {
+        parts.push(`Spin ${Math.round(avgSpin)} rpm is above the ${lo}–${hi} window — ballooning flight, shorter carry than ball speed implies.`);
+      } else {
+        parts.push(`Spin ${Math.round(avgSpin)} rpm is above the ${lo}–${hi} window.`);
+      }
+    }
+  }
+
   return parts.join(" ");
 }
 
@@ -938,12 +1024,14 @@ async function handleClubDetail(
     carry_std_dev: null,
     avg_ball_speed: null,
     avg_club_speed: null,
+    avg_total_spin: null,
     metrics: {
       smash: { avg: null, status: "n/a" },
       launch: { avg: null, status: "n/a" },
       attack: { avg: null, status: "n/a" },
+      spin: { avg: null, status: "n/a" },
     },
-    benchmarks: { smash: null, launch: null, attack: null },
+    benchmarks: { smash: null, launch: null, attack: null, spin: null },
     narrative: null,
     shots: [],
   };
@@ -972,6 +1060,7 @@ async function handleClubDetail(
   const smashes = shots.map((s) => s.smash).filter((v): v is number => v != null);
   const launches = shots.map((s) => s.vla).filter((v): v is number => v != null);
   const attacks = shots.map((s) => s.attack_angle).filter((v): v is number => v != null);
+  const spins = shots.map((s) => s.total_spin).filter((v): v is number => v != null);
 
   const avgCarry = mean(carries);
   const bestCarry = maxOrNull(carries);
@@ -981,11 +1070,13 @@ async function handleClubDetail(
   const avgSmash = mean(smashes);
   const avgLaunch = mean(launches);
   const avgAttack = mean(attacks);
+  const avgSpin = mean(spins);
 
   const bench = clubBenchmark(clubCode);
   const smashStatus = classifyMetric(avgSmash, bench?.smash ?? null);
   const launchStatus = classifyMetric(avgLaunch, bench?.launch ?? null);
   const attackStatus = classifyMetric(avgAttack, bench?.attack ?? null);
+  const spinStatus = classifyMetric(avgSpin, bench?.spin ?? null);
 
   const narrative = buildClubNarrative(
     clubCode,
@@ -996,6 +1087,8 @@ async function handleClubDetail(
     avgSmash,
     launchStatus,
     avgLaunch,
+    spinStatus,
+    avgSpin,
     shots.length,
   );
 
@@ -1008,15 +1101,18 @@ async function handleClubDetail(
     carry_std_dev: carryStdDev != null ? round1(carryStdDev) : null,
     avg_ball_speed: round1(avgBallSpeed),
     avg_club_speed: round1(avgClubSpeed),
+    avg_total_spin: avgSpin != null ? Math.round(avgSpin) : null,
     metrics: {
       smash: { avg: avgSmash != null ? Number(avgSmash.toFixed(2)) : null, status: smashStatus },
       launch: { avg: round1(avgLaunch), status: launchStatus },
       attack: { avg: round1(avgAttack), status: attackStatus },
+      spin: { avg: avgSpin != null ? Math.round(avgSpin) : null, status: spinStatus },
     },
     benchmarks: {
       smash: bench?.smash ?? null,
       launch: bench?.launch ?? null,
       attack: bench?.attack ?? null,
+      spin: bench?.spin ?? null,
     },
     narrative,
     shots: shots.map((s) => ({
@@ -1781,7 +1877,7 @@ async function handleTrends(
       .filter((v): v is number => v != null);
     points.push({
       date: sess.started_at.slice(0, 10),
-      carry: maxOrNull(carries),
+      carry: mean(carries),     // session avg carry; "max per session" wasn't useful as a trend
       ball_speed: mean(speeds),
       smash: mean(smashes),
     });
