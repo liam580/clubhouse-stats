@@ -2025,7 +2025,9 @@ function renderSessionPopulated(data) {
 }
 
 // ── RENDER: HISTORY ──────────────────────────────────────────
+let _lastHistoryData = null;
 function renderHistory(data) {
+  _lastHistoryData = data; // read by buildCsvForView on the History tab
   const list = $('#history-list');
   const empty = $('#history-empty');
   list.innerHTML = "";
@@ -2454,7 +2456,9 @@ async function loadClubDetail(clubKey) {
   }
 }
 
+let _lastClubData = null;
 function renderClubDetail(data) {
+  _lastClubData = data; // read by buildCsvForView on the club detail view
   const label = clubLabel(data.club);
   const labelUpper = label.toUpperCase();
 
@@ -2731,114 +2735,192 @@ function renderPlayer(data) {
 }
 
 // ── SHARE BUTTON ─────────────────────────────────────────────
-// Builds a one-line text summary of the active view and hands it to
-// navigator.share. Falls back to clipboard.writeText + a brief toast on
-// browsers without share support (older Android, desktop). No external
-// deps, no runtime work outside the tap handler.
-function buildShareText() {
-  const d = _sessionData || {};
-  const view = _currentView || 'session';
+// ── CSV EXPORT ───────────────────────────────────────────────
+// Top-right icon → context-aware CSV of the active view. Per-view scope:
+//   session      one row per shot used this session
+//   club detail  one row per shot of the selected club
+//   history      one row per recent session
+//   trends       bag distance ladder (one row per club)
+//   player       lifetime best-clubs (one row per club)
+// Tries navigator.share with a CSV File first (gives iOS users the
+// share sheet with "Save to Files" / Mail / AirDrop / Messages); falls
+// back to a blob-URL anchor download.
 
-  // Round helper that tolerates null/undefined
-  const r = (n, digits = 0) => (n == null || Number.isNaN(n))
-    ? null
-    : (digits === 0 ? Math.round(n) : Number(n).toFixed(digits));
+function _csvEscape(value) {
+  if (value == null) return '';
+  const s = String(value);
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+function _csvFromRows(rows) {
+  return rows.map(r => r.map(_csvEscape).join(',')).join('\n');
+}
+// Round numeric CSV values so floating-point artifacts (1.4049999999999998
+// for smash, 18.400000000000002 for launch, etc.) don't appear in the file.
+function _rd(n, digits) {
+  if (n == null || Number.isNaN(n)) return '';
+  return Number(Number(n).toFixed(digits));
+}
+function _shotsCsv(shots, fallbackClub) {
+  const header = ['shot_number','recorded_at','club','carry_yds','ball_speed_mph','club_speed_mph','smash_factor','launch_deg','attack_angle_deg','total_spin_rpm','club_path_deg','face_to_target_deg'];
+  const rows = (shots || []).map((s, i) => [
+    s.shot_number ?? (i + 1),
+    s.recorded_at ?? '',
+    s.club ?? fallbackClub ?? '',
+    _rd(s.carry_distance, 1),
+    _rd(s.ball_speed, 1),
+    _rd(s.club_speed, 1),
+    _rd(s.smash, 2),
+    _rd(s.vla, 1),
+    _rd(s.attack_angle, 1),
+    _rd(s.total_spin, 0),
+    _rd(s.club_path, 1),
+    _rd(s.face_to_target, 1),
+  ]);
+  return _csvFromRows([header, ...rows]);
+}
 
+async function buildCsvForView(view) {
   if (view === 'club') {
-    // Club detail uses its own data shape — no _sessionData equivalent on
-    // hand. Pull from rendered text instead.
-    const head = document.querySelector('#club-detail-strip')?.textContent?.trim().replace(/\s+/g, ' ');
-    const avgCarry = document.querySelector('#club-stat-grid .stat-card:nth-child(1) .stat-num')?.textContent?.trim();
-    const avgSmash = document.querySelector('#club-stat-grid .stat-card:nth-child(4) .stat-num')?.textContent?.trim();
-    return [head, avgCarry ? `${avgCarry} avg` : null, avgSmash ? `${avgSmash} smash` : null]
-      .filter(Boolean)
-      .join(' · ') + ' — Clubhouse stats';
+    const data = _lastClubData;
+    if (!data || !data.shots || data.shots.length === 0) {
+      return { filename: 'clubhouse-club.csv', csv: '' };
+    }
+    const slug = String(data.club || 'club').toLowerCase();
+    return {
+      filename: `clubhouse-${slug}-shots.csv`,
+      csv: _shotsCsv(data.shots, data.club),
+    };
   }
 
   if (view === 'history') {
-    const cards = document.querySelectorAll('#history-list .history-card').length;
-    return `${cards} recent session${cards === 1 ? '' : 's'} — Clubhouse stats`;
+    const data = _lastHistoryData;
+    const sessions = (data && data.sessions) || [];
+    if (sessions.length === 0) return { filename: 'clubhouse-history.csv', csv: '' };
+    const header = ['booking_id','started_at','ended_at','bay_number','shot_count','max_carry_yds','clubs_used'];
+    const rows = sessions.map(s => [
+      s.booking_id ?? '',
+      s.started_at ?? '',
+      s.ended_at ?? '',
+      s.bay_number ?? '',
+      s.shot_count ?? '',
+      s.max_carry ?? '',
+      (s.shots_logged_clubs || []).join(';'),
+    ]);
+    return { filename: 'clubhouse-history.csv', csv: _csvFromRows([header, ...rows]) };
   }
 
   if (view === 'trends') {
-    const trendData = _trendsData || {};
-    const ladder = (trendData.bag_ladder || []).slice(0, 3);
-    if (ladder.length === 0) return "Trends — Clubhouse stats";
-    const top = ladder.map(c => `${clubLabel(c.club)} ${r(c.avg_carry)} yds`).join(' · ');
-    return `My bag: ${top} — Clubhouse stats`;
+    const data = _trendsData;
+    const ladder = (data && data.bag_ladder) || [];
+    if (ladder.length === 0) return { filename: 'clubhouse-bag-ladder.csv', csv: '' };
+    const header = ['club','shots','avg_carry_yds','best_carry_yds'];
+    const rows = ladder.map(r => [r.club, r.shots, r.avg_carry, r.best_carry]);
+    return { filename: 'clubhouse-bag-ladder.csv', csv: _csvFromRows([header, ...rows]) };
   }
 
   if (view === 'player') {
-    // Player tab — _sessionData not relevant; use the last fetched player
-    // data instead. Stored on the DOM via _lastPlayerData (set in renderPlayer).
-    const p = _lastPlayerData || {};
-    const sessions = p.total_sessions ?? null;
-    const shots = p.total_shots ?? null;
-    const top = (p.best_clubs && p.best_clubs[0]) || null;
-    const bits = [];
-    if (sessions != null && shots != null) bits.push(`${sessions} sessions · ${shots.toLocaleString()} shots`);
-    if (top) bits.push(`best ${clubLabel(top.club)} ${top.avg_smash} smash`);
-    return (bits.length ? bits.join(' · ') : "My golf stats") + ' — Clubhouse';
+    const data = _lastPlayerData;
+    const best = (data && data.best_clubs) || [];
+    if (best.length === 0) return { filename: 'clubhouse-best-clubs.csv', csv: '' };
+    const header = ['club','shots','avg_carry_yds','avg_smash','smash_status'];
+    const rows = best.map(c => [c.club, c.shots, c.avg_carry, c.avg_smash, c.smash_status]);
+    return { filename: 'clubhouse-best-clubs.csv', csv: _csvFromRows([header, ...rows]) };
   }
 
-  // Default: session view
-  const hero = d.hero || {};
-  const tk = d.takeaway || {};
-  const featured = hero.featured_strength;
-  const shots = hero.total_shots || 0;
-  if (featured && featured.club) {
-    const detail = (featured.text || '').replace(/^\{club\}[:\s]+/i, '').replace(/\s+/g, ' ');
-    return `${clubLabel(featured.club)} · ${detail} — Clubhouse stats`;
-  }
-  const bits = [];
-  if (shots) bits.push(`${shots} shots`);
-  if (hero.avg_carry != null) bits.push(`${r(hero.avg_carry)} yds avg`);
-  if (tk.longest_club && tk.longest_carry != null) {
-    bits.push(`${clubLabel(tk.longest_club)} longest at ${r(tk.longest_carry)} yds`);
-  }
-  return (bits.length ? bits.join(' · ') : "Session stats") + ' — Clubhouse';
+  // Default: session view. Raw shots aren't in the session response, so
+  // fan out a few ?view=club requests across the clubs that appear in
+  // by_club. Concat the per-club shot lists, then sort by recorded_at.
+  const data = _sessionData;
+  const byClub = (data && data.by_club) || [];
+  const clubs = byClub.filter(c => c.club).map(c => c.club);
+  if (clubs.length === 0) return { filename: 'clubhouse-session.csv', csv: '' };
+  const lists = await Promise.all(clubs.map(c => fetchView('club', { club: c }).catch(() => null)));
+  const allShots = lists
+    .filter(Boolean)
+    .flatMap(r => (r.shots || []).map(s => ({ ...s, club: s.club || r.club })));
+  if (allShots.length === 0) return { filename: 'clubhouse-session.csv', csv: '' };
+  // Sort oldest -> newest so shot_number is intuitive
+  allShots.sort((a, b) => {
+    const ta = a.recorded_at ? new Date(a.recorded_at).getTime() : 0;
+    const tb = b.recorded_at ? new Date(b.recorded_at).getTime() : 0;
+    return ta - tb;
+  });
+  const sessId = (data.session && data.session.id) ? data.session.id.slice(0, 8) : 'shots';
+  return { filename: `clubhouse-session-${sessId}.csv`, csv: _shotsCsv(allShots) };
 }
 
-async function handleShare() {
-  const text = buildShareText();
+function _showExportToast(msg) {
+  const toast = $('#share-toast');
+  if (!toast) return;
+  toast.textContent = msg;
+  toast.classList.remove('hidden');
+  toast.classList.add('visible');
+  clearTimeout(toast.__timer);
+  toast.__timer = setTimeout(() => {
+    toast.classList.remove('visible');
+    setTimeout(() => toast.classList.add('hidden'), 200);
+  }, 1800);
+}
+
+async function handleExport() {
+  const view = _currentView || 'session';
+  _showExportToast('preparing csv…');
+  let payload;
   try {
-    if (navigator.share) {
-      await navigator.share({ text });
-      return;
+    payload = await buildCsvForView(view);
+  } catch (err) {
+    console.error('[clubhouse:stats] export failed', err);
+    _showExportToast('export failed');
+    return;
+  }
+  if (!payload || !payload.csv) {
+    _showExportToast('nothing to export');
+    return;
+  }
+  const { filename, csv } = payload;
+
+  // Try navigator.share with a File first — gives iOS users the share
+  // sheet (Save to Files / Mail / AirDrop / Messages). Many WKWebViews
+  // support this, including the Optix embed.
+  try {
+    if (navigator.canShare && navigator.share) {
+      const file = new File([csv], filename, { type: 'text/csv' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+        _showExportToast('exported');
+        return;
+      }
     }
   } catch (err) {
-    // User aborted the share sheet — that's fine, just bail without toast.
-    if (err && err.name === 'AbortError') return;
+    if (err && err.name === 'AbortError') return; // user cancelled
+    // Otherwise fall through to download
   }
-  // Fallback: clipboard
+
+  // Fallback: blob URL + anchor click. Works in browsers but may be
+  // blocked in some embedded webviews.
   try {
-    await navigator.clipboard.writeText(text);
-  } catch (_) {
-    // Last-ditch: legacy fallback via a hidden input
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand('copy'); } catch (_) { /* swallow */ }
-    document.body.removeChild(ta);
-  }
-  const toast = $('#share-toast');
-  if (toast) {
-    toast.classList.remove('hidden');
-    toast.classList.add('visible');
-    clearTimeout(toast.__timer);
-    toast.__timer = setTimeout(() => {
-      toast.classList.remove('visible');
-      // Hide after the fade so it doesn't intercept focus/clicks.
-      setTimeout(() => toast.classList.add('hidden'), 200);
-    }, 1600);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 0);
+    _showExportToast('downloaded');
+  } catch (err) {
+    console.error('[clubhouse:stats] csv download failed', err);
+    _showExportToast('export failed');
   }
 }
 
 const _shareBtn = $('#share-btn');
-if (_shareBtn) _shareBtn.addEventListener('click', handleShare);
+if (_shareBtn) _shareBtn.addEventListener('click', handleExport);
 
 // ── WIRING ───────────────────────────────────────────────────
 $$('.tab').forEach(t => {
