@@ -24,8 +24,9 @@
   }
 
   *, *::before, *::after { box-sizing: border-box; }
-  html, body {
-    margin: 0; padding: 0;
+  /* Background lives on the <html> element so <body> can stay transparent
+     and let the fixed ::before pseudo-element render. */
+  html {
     background: var(--green);
     color: var(--cream);
     font-family: 'Bai Jamjuree', system-ui, sans-serif;
@@ -33,24 +34,38 @@
     line-height: 1.65;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* `overscroll-behavior: none` kills the iOS WKWebView rubber-band that
+       was reading as "infinite scroll past content". Combined with the
+       body sizing below it gives the canvas a hard stop at content end. */
+    overscroll-behavior: none;
+  }
+  html, body {
+    margin: 0; padding: 0;
     overflow-x: hidden;
   }
   body {
     min-height: 100vh;
-    /* Grid pattern via a fixed pseudo-element so we don't trigger the iOS
-       WKWebView bug where `background-attachment: fixed` on the body
-       causes phantom infinite scroll / rubber-banding past content. */
+    background: transparent;
+    overscroll-behavior: none;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
+  /* Fixed background layer — grid lines on a dark-green base with soft
+     blue (top) + maroon (bottom-right) radial halos. The grid stays
+     subtle so type stays readable; the halos give the dark canvas the
+     "techy depth" that flat green was missing. position:fixed + inset:0
+     keeps the layer pinned during scroll, and z-index:-1 places it below
+     the now-transparent body. */
   body::before {
     content: "";
     position: fixed;
     inset: 0;
     z-index: -1;
     pointer-events: none;
-    background-image:
-      repeating-linear-gradient(0deg, rgba(237,228,207,0.04) 0 1px, transparent 1px 40px),
-      repeating-linear-gradient(90deg, rgba(237,228,207,0.04) 0 1px, transparent 1px 40px);
+    background:
+      radial-gradient(ellipse 80% 60% at 50% -10%, rgba(182, 211, 223, 0.18), transparent 60%),
+      radial-gradient(ellipse 70% 60% at 110% 110%, rgba(122, 39, 39, 0.22), transparent 60%),
+      repeating-linear-gradient(0deg,  rgba(237,228,207,0.05) 0 1px, transparent 1px 40px),
+      repeating-linear-gradient(90deg, rgba(237,228,207,0.05) 0 1px, transparent 1px 40px);
   }
 
   .canvas {
@@ -1075,11 +1090,21 @@
       <p class="eyebrow dim">BEST CLUBS</p>
       <div id="player-best-clubs"></div>
 
-      <p class="eyebrow dim" style="margin-top:24px;">STRENGTHS</p>
-      <div id="player-strengths"></div>
-
-      <p class="eyebrow dim" style="margin-top:24px;">WATCH</p>
-      <div id="player-watches"></div>
+      <!-- Same takeaway-card chrome as the session view (✦ eyebrow + maroon-
+           edge frame + STRENGTH/WATCH row variants) so it's a familiar block
+           across views. Sections inside get hidden when their list is empty. -->
+      <article class="card maroon-edge" id="player-takeaway-card" style="margin-top:24px;">
+        <div class="takeaway-eb"><span class="star">✦</span> PLAYER TAKEAWAY</div>
+        <div class="takeaway-row hidden" id="player-strengths-row">
+          <div class="takeaway-row-eb takeaway-row-eb-strength">STRENGTHS</div>
+          <div id="player-strengths"></div>
+        </div>
+        <div class="takeaway-row hidden" id="player-watches-row">
+          <div class="takeaway-row-eb takeaway-row-eb-watch">WATCH</div>
+          <div id="player-watches"></div>
+        </div>
+        <p class="takeaway-body hidden" id="player-takeaway-fallback"></p>
+      </article>
 
       <p class="eyebrow dim" style="margin-top:24px;">TIME OF DAY</p>
       <h3 class="section-title" id="player-best-time">when you play your best</h3>
@@ -2588,38 +2613,44 @@ function renderPlayer(data) {
     return line.text.replace(/\{club\}/g, esc(clubLabel(line.club)));
   };
 
+  // Render lines inside the shared player-takeaway-card (same chrome as the
+  // session takeaway). Hide each row entirely when its list is empty rather
+  // than showing a "no strengths yet" placeholder — keeps the card clean.
   const strengthsWrap = $('#player-strengths');
+  const strengthsRow  = $('#player-strengths-row');
+  const watchesWrap   = $('#player-watches');
+  const watchesRow    = $('#player-watches-row');
+  const fallback      = $('#player-takeaway-fallback');
+
   strengthsWrap.innerHTML = "";
   const strengths = Array.isArray(data.recurring_strengths) ? data.recurring_strengths : [];
-  if (strengths.length === 0) {
-    strengthsWrap.innerHTML = `<p style="color:var(--dim); font-size:13px;">no recurring strengths yet — need more sessions.</p>`;
-  } else {
-    strengths.forEach((line) => {
-      const div = document.createElement('div');
-      div.className = "takeaway-row";
-      div.style.marginTop = "8px";
-      div.innerHTML = `
-        <p class="takeaway-row-body">${fmtLine(line)}</p>
-      `;
-      strengthsWrap.appendChild(div);
-    });
-  }
+  strengths.forEach((line) => {
+    const p = document.createElement('p');
+    p.className = "takeaway-row-body";
+    p.style.marginTop = "4px";
+    p.innerHTML = fmtLine(line);
+    strengthsWrap.appendChild(p);
+  });
+  strengthsRow.classList.toggle('hidden', strengths.length === 0);
 
-  const watchesWrap = $('#player-watches');
   watchesWrap.innerHTML = "";
   const watches = Array.isArray(data.recurring_watches) ? data.recurring_watches : [];
-  if (watches.length === 0) {
-    watchesWrap.innerHTML = `<p style="color:var(--dim); font-size:13px;">nothing flagged — keep it up.</p>`;
+  watches.forEach((line) => {
+    const p = document.createElement('p');
+    p.className = "takeaway-row-body";
+    p.style.marginTop = "4px";
+    p.innerHTML = fmtLine(line);
+    watchesWrap.appendChild(p);
+  });
+  watchesRow.classList.toggle('hidden', watches.length === 0);
+
+  // If both empty, show a single neutral fallback inside the card so the
+  // ✦ eyebrow doesn't sit alone.
+  if (strengths.length === 0 && watches.length === 0) {
+    fallback.textContent = "Not enough lifetime data yet — a few more sessions will surface patterns.";
+    fallback.classList.remove('hidden');
   } else {
-    watches.forEach((line) => {
-      const div = document.createElement('div');
-      div.className = "takeaway-row";
-      div.style.marginTop = "8px";
-      div.innerHTML = `
-        <p class="takeaway-row-body">${fmtLine(line)}</p>
-      `;
-      watchesWrap.appendChild(div);
-    });
+    fallback.classList.add('hidden');
   }
 
   // Time of day — three buckets side-by-side, highlight the best window.
