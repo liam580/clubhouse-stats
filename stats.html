@@ -103,6 +103,32 @@
   }
   .icon-btn svg { width: 14px; height: 14px; }
 
+  /* Share-confirmation toast — shown when navigator.share isn't available
+     and we fall back to clipboard. Pinned to viewport so it doesn't shift
+     content; auto-hides via the JS handler. */
+  #share-toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(40px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    background: var(--green2);
+    color: var(--cream);
+    border: 1px solid var(--thin2);
+    border-radius: 999px;
+    padding: 10px 18px;
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-size: 11px;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    z-index: 50;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 160ms ease;
+  }
+  #share-toast.visible {
+    opacity: 1;
+  }
+
   /* ── TAB BAR ─────────────────────────────────────────────── */
   .tabs {
     display: grid;
@@ -935,13 +961,15 @@
     <!-- HEADER -->
     <header class="header">
       <h1 class="title">stats</h1>
-      <button class="icon-btn" aria-label="share">
+      <button class="icon-btn" aria-label="share" id="share-btn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
           <path d="M16 6l-4-4-4 4" />
           <path d="M12 2v14" />
         </svg>
       </button>
+      <!-- Lightweight share-confirmation toast (clipboard fallback) -->
+      <div id="share-toast" class="hidden" role="status" aria-live="polite">copied to clipboard</div>
     </header>
 
     <!-- TABS -->
@@ -2547,8 +2575,10 @@ function renderClubDetail(data) {
 }
 
 // ── RENDER: PLAYER ───────────────────────────────────────────
+let _lastPlayerData = null;
 function renderPlayer(data) {
   if (!data) return;
+  _lastPlayerData = data; // read by buildShareText when share is tapped on the Player tab
 
   // Header summary line: "12 sessions · 247 shots"
   const ss = data.total_sessions ?? 0;
@@ -2699,6 +2729,116 @@ function renderPlayer(data) {
     ? `data window · ${data.shot_window_note}`
     : "";
 }
+
+// ── SHARE BUTTON ─────────────────────────────────────────────
+// Builds a one-line text summary of the active view and hands it to
+// navigator.share. Falls back to clipboard.writeText + a brief toast on
+// browsers without share support (older Android, desktop). No external
+// deps, no runtime work outside the tap handler.
+function buildShareText() {
+  const d = _sessionData || {};
+  const view = _currentView || 'session';
+
+  // Round helper that tolerates null/undefined
+  const r = (n, digits = 0) => (n == null || Number.isNaN(n))
+    ? null
+    : (digits === 0 ? Math.round(n) : Number(n).toFixed(digits));
+
+  if (view === 'club') {
+    // Club detail uses its own data shape — no _sessionData equivalent on
+    // hand. Pull from rendered text instead.
+    const head = document.querySelector('#club-detail-strip')?.textContent?.trim().replace(/\s+/g, ' ');
+    const avgCarry = document.querySelector('#club-stat-grid .stat-card:nth-child(1) .stat-num')?.textContent?.trim();
+    const avgSmash = document.querySelector('#club-stat-grid .stat-card:nth-child(4) .stat-num')?.textContent?.trim();
+    return [head, avgCarry ? `${avgCarry} avg` : null, avgSmash ? `${avgSmash} smash` : null]
+      .filter(Boolean)
+      .join(' · ') + ' — Clubhouse stats';
+  }
+
+  if (view === 'history') {
+    const cards = document.querySelectorAll('#history-list .history-card').length;
+    return `${cards} recent session${cards === 1 ? '' : 's'} — Clubhouse stats`;
+  }
+
+  if (view === 'trends') {
+    const trendData = _trendsData || {};
+    const ladder = (trendData.bag_ladder || []).slice(0, 3);
+    if (ladder.length === 0) return "Trends — Clubhouse stats";
+    const top = ladder.map(c => `${clubLabel(c.club)} ${r(c.avg_carry)} yds`).join(' · ');
+    return `My bag: ${top} — Clubhouse stats`;
+  }
+
+  if (view === 'player') {
+    // Player tab — _sessionData not relevant; use the last fetched player
+    // data instead. Stored on the DOM via _lastPlayerData (set in renderPlayer).
+    const p = _lastPlayerData || {};
+    const sessions = p.total_sessions ?? null;
+    const shots = p.total_shots ?? null;
+    const top = (p.best_clubs && p.best_clubs[0]) || null;
+    const bits = [];
+    if (sessions != null && shots != null) bits.push(`${sessions} sessions · ${shots.toLocaleString()} shots`);
+    if (top) bits.push(`best ${clubLabel(top.club)} ${top.avg_smash} smash`);
+    return (bits.length ? bits.join(' · ') : "My golf stats") + ' — Clubhouse';
+  }
+
+  // Default: session view
+  const hero = d.hero || {};
+  const tk = d.takeaway || {};
+  const featured = hero.featured_strength;
+  const shots = hero.total_shots || 0;
+  if (featured && featured.club) {
+    const detail = (featured.text || '').replace(/^\{club\}[:\s]+/i, '').replace(/\s+/g, ' ');
+    return `${clubLabel(featured.club)} · ${detail} — Clubhouse stats`;
+  }
+  const bits = [];
+  if (shots) bits.push(`${shots} shots`);
+  if (hero.avg_carry != null) bits.push(`${r(hero.avg_carry)} yds avg`);
+  if (tk.longest_club && tk.longest_carry != null) {
+    bits.push(`${clubLabel(tk.longest_club)} longest at ${r(tk.longest_carry)} yds`);
+  }
+  return (bits.length ? bits.join(' · ') : "Session stats") + ' — Clubhouse';
+}
+
+async function handleShare() {
+  const text = buildShareText();
+  try {
+    if (navigator.share) {
+      await navigator.share({ text });
+      return;
+    }
+  } catch (err) {
+    // User aborted the share sheet — that's fine, just bail without toast.
+    if (err && err.name === 'AbortError') return;
+  }
+  // Fallback: clipboard
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    // Last-ditch: legacy fallback via a hidden input
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (_) { /* swallow */ }
+    document.body.removeChild(ta);
+  }
+  const toast = $('#share-toast');
+  if (toast) {
+    toast.classList.remove('hidden');
+    toast.classList.add('visible');
+    clearTimeout(toast.__timer);
+    toast.__timer = setTimeout(() => {
+      toast.classList.remove('visible');
+      // Hide after the fade so it doesn't intercept focus/clicks.
+      setTimeout(() => toast.classList.add('hidden'), 200);
+    }, 1600);
+  }
+}
+
+const _shareBtn = $('#share-btn');
+if (_shareBtn) _shareBtn.addEventListener('click', handleShare);
 
 // ── WIRING ───────────────────────────────────────────────────
 $$('.tab').forEach(t => {
