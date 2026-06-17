@@ -1810,9 +1810,11 @@ function computeTimeOfDay(shots: ShotRow[]): PlayerTimeOfDay {
     };
   });
 
-  // Best window — highest avg smash, with a minimum-shots gate so a single
-  // outlier doesn't crown a bucket. If none qualify, leave null.
-  const eligible = out.filter((b) => b.shots >= 10 && b.avg_smash != null);
+  // Best window — highest avg smash, with a small minimum-shots gate so a
+  // single shot doesn't crown a bucket. Threshold kept low (3) so a bucket
+  // with a handful of shots can still win against a high-volume bucket with
+  // lower numbers — picking 37 shots of 1.37 over 5 shots of 1.40 felt wrong.
+  const eligible = out.filter((b) => b.shots >= 3 && b.avg_smash != null);
   let best: PlayerTimeBucket | null = null;
   for (const b of eligible) {
     if (!best || (b.avg_smash ?? 0) > (best.avg_smash ?? 0)) best = b;

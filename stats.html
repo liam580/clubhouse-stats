@@ -37,11 +37,20 @@
   }
   body {
     min-height: 100vh;
+    /* Grid pattern via a fixed pseudo-element so we don't trigger the iOS
+       WKWebView bug where `background-attachment: fixed` on the body
+       causes phantom infinite scroll / rubber-banding past content. */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
     background-image:
       repeating-linear-gradient(0deg, rgba(237,228,207,0.04) 0 1px, transparent 1px 40px),
       repeating-linear-gradient(90deg, rgba(237,228,207,0.04) 0 1px, transparent 1px 40px);
-    background-attachment: fixed;
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
 
   .canvas {
@@ -2386,11 +2395,10 @@ function renderPlayer(data) {
     }
     const smash = b.avg_smash != null ? b.avg_smash.toFixed(2) : "—";
     const carry = b.avg_carry != null ? `${Math.round(b.avg_carry)} yd avg` : "—";
-    // BEST marker on its own line so the eyebrow always renders single-line
-    // and SMASH baselines stay aligned across all three cards.
+    // Blue border on the best card is the signal — no explicit · BEST row
+    // needed (kept all three card heights equal too).
     card.innerHTML = `
       <div class="stat-eyebrow">${esc(b.label.split(" (")[0].toUpperCase())}</div>
-      ${isBest ? `<div class="stat-eyebrow" style="color:var(--blue);">· BEST</div>` : ""}
       <div class="stat-numwrap">
         <div class="stat-num">${smash}</div>
         <span class="stat-unit">smash</span>
