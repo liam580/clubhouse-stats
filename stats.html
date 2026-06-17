@@ -687,6 +687,118 @@
   .hc-num .u { font-size: 11px; letter-spacing: 1.6px; color: var(--dim); margin-left: 3px; text-transform: uppercase; }
 
   /* ── TRENDS ──────────────────────────────────────────────── */
+  /* Bag distance ladder — one row per club, sorted by avg carry desc.
+     The bar visually encodes carry; the right column carries the number
+     so a quick scan reveals distance gaps in the bag. */
+  .bag-row {
+    display: grid;
+    grid-template-columns: 32px 1fr auto;
+    align-items: center;
+    column-gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--thin);
+  }
+  .bag-row:last-child { border-bottom: none; }
+  .bag-row .bag-tag {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 15px;
+    letter-spacing: 0.6px;
+    color: var(--blue);
+    text-align: center;
+  }
+  .bag-row .bag-bar-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .bag-row .bag-name {
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+    color: var(--cream);
+    text-transform: uppercase;
+  }
+  .bag-row .bag-bar {
+    height: 6px;
+    background: var(--thin);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+  }
+  .bag-row .bag-bar > span {
+    display: block;
+    height: 100%;
+    background: var(--blue);
+    border-radius: 3px;
+  }
+  .bag-row .bag-carry {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 22px;
+    letter-spacing: -0.5px;
+    color: var(--cream);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .bag-row .bag-carry .bag-unit {
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-size: 10px;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-left: 3px;
+  }
+
+  /* Improvement strips — one row per club showing carry/smash/launch
+     deltas vs previous half-window. Numbers tabular for easy scanning. */
+  .imp-row {
+    display: grid;
+    grid-template-columns: 32px 1fr auto;
+    align-items: center;
+    column-gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--thin);
+  }
+  .imp-row:last-child { border-bottom: none; }
+  .imp-row .imp-tag {
+    font-family: 'Anton', Impact, system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 15px;
+    letter-spacing: 0.6px;
+    color: var(--blue);
+    text-align: center;
+  }
+  .imp-row .imp-name {
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+    color: var(--cream);
+    text-transform: uppercase;
+  }
+  .imp-row .imp-deltas {
+    display: flex;
+    gap: 12px;
+    font-family: 'Bai Jamjuree', system-ui, sans-serif;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+  }
+  .imp-row .imp-delta {
+    color: var(--dim);
+  }
+  .imp-row .imp-delta.up   { color: var(--blue); }
+  .imp-row .imp-delta.down { color: var(--maroon2); }
+  .imp-row .imp-delta.flat { color: var(--dim); }
+  .imp-row .imp-delta .imp-metric {
+    font-size: 9px;
+    color: var(--dim);
+    letter-spacing: 1.2px;
+    margin-right: 3px;
+  }
+
   .trend-card { padding: 18px; }
   .trend-head {
     display: flex;
@@ -923,9 +1035,32 @@
 
     <!-- ─── POPULATED: TRENDS ─── -->
     <section id="view-trends" class="view hidden" role="tabpanel" aria-labelledby="tab-trends">
-      <div id="trends-chips" class="chip-row" role="group" aria-label="club filter"></div>
-      <p class="eyebrow" id="trends-eyebrow">ALL CLUBS · LAST 6 SESSIONS</p>
-      <div id="trends-body"></div>
+      <!-- Bag distance ladder — avg carry per club, sorted descending so
+           distance gaps in the bag jump out at a glance. -->
+      <div id="trends-bag-section">
+        <p class="eyebrow dim">YOUR BAG · LAST 6 SESSIONS</p>
+        <h3 class="section-title">distance ladder</h3>
+        <div id="trends-bag-ladder"></div>
+      </div>
+
+      <!-- Per-club deltas: recent half-window vs previous half-window.
+           Tells the player whether each club is trending up or down. -->
+      <div id="trends-improvements-section" style="margin-top: 24px;">
+        <p class="eyebrow dim">RECENT 3 VS PREVIOUS 3 SESSIONS</p>
+        <h3 class="section-title">what's changed</h3>
+        <div id="trends-improvements"></div>
+      </div>
+
+      <!-- Per-club chart drill — chip row + 3 charts. Defaults to the
+           most-hit club; no "all clubs" option here since the average
+           across clubs is meaningless. -->
+      <div id="trends-charts-section" style="margin-top: 28px;">
+        <p class="eyebrow dim">PER-CLUB TRENDS</p>
+        <div id="trends-chips" class="chip-row" role="group" aria-label="club filter"></div>
+        <p class="eyebrow" id="trends-eyebrow"></p>
+        <div id="trends-body"></div>
+      </div>
+
       <div id="trends-gate" class="state-card hidden">
         <h2 class="state-title">trends unlock at 3 sessions</h2>
         <p class="state-body" id="trends-gate-body"></p>
@@ -1080,47 +1215,67 @@ const __MOCK_DATA__ = (() => {
     trends: {
       ready: true,
       total_sessions: 6,
-      selected_club: "all",
+      selected_club: "IRON7",
+      default_club: "IRON7",
       lifetime_clubs: [
-        { club: "DRIVER", shots: 178 },
         { club: "IRON7",  shots: 312 },
+        { club: "DRIVER", shots: 178 },
         { club: "IRON6",  shots: 144 },
         { club: "PW",     shots: 92 },
         { club: "WEDGE",  shots: 47 }
       ],
+      bag_ladder: [
+        { club: "DRIVER", shots: 178, avg_carry: 244, best_carry: 261 },
+        { club: "WOOD3",  shots: 22,  avg_carry: 218, best_carry: 232 },
+        { club: "IRON5",  shots: 31,  avg_carry: 192, best_carry: 204 },
+        { club: "IRON6",  shots: 144, avg_carry: 178, best_carry: 188 },
+        { club: "IRON7",  shots: 312, avg_carry: 165, best_carry: 178 },
+        { club: "IRON8",  shots: 56,  avg_carry: 152, best_carry: 161 },
+        { club: "IRON9",  shots: 48,  avg_carry: 138, best_carry: 145 },
+        { club: "PW",     shots: 92,  avg_carry: 115, best_carry: 124 },
+        { club: "WEDGE",  shots: 47,  avg_carry: 88,  best_carry: 96 }
+      ],
+      improvements: [
+        { club: "DRIVER", carry_delta: 6,  smash_delta: 0.02,  launch_delta: 0.4,  sessions_recent: 3, sessions_previous: 3 },
+        { club: "IRON7",  carry_delta: 3,  smash_delta: 0.01,  launch_delta: -0.2, sessions_recent: 3, sessions_previous: 3 },
+        { club: "IRON6",  carry_delta: -2, smash_delta: 0,     launch_delta: 0.1,  sessions_recent: 2, sessions_previous: 3 },
+        { club: "PW",     carry_delta: -4, smash_delta: -0.03, launch_delta: 0.8,  sessions_recent: 2, sessions_previous: 2 }
+      ],
+      // Mock charts mirror 7-iron values (the default_club above) since the
+      // trends chart is per-club, not multi-club.
       charts: {
         carry: {
           series: [
-            { date: ymd(daysAgo(21)), value: 205, booking_id: "mock-bk-1" },
-            { date: ymd(daysAgo(14)), value: 212, booking_id: "mock-bk-2" },
-            { date: ymd(daysAgo(9)),  value: 218, booking_id: "mock-bk-3" },
-            { date: ymd(daysAgo(5)),  value: 224, booking_id: "mock-bk-4" },
-            { date: ymd(daysAgo(2)),  value: 241, booking_id: "mock-bk-5" },
-            { date: ymd(now.toISOString()), value: 248, booking_id: "mock-bk-6" }
+            { date: ymd(daysAgo(21)), value: 158, booking_id: "mock-bk-1" },
+            { date: ymd(daysAgo(14)), value: 161, booking_id: "mock-bk-2" },
+            { date: ymd(daysAgo(9)),  value: 163, booking_id: "mock-bk-3" },
+            { date: ymd(daysAgo(5)),  value: 162, booking_id: "mock-bk-4" },
+            { date: ymd(daysAgo(2)),  value: 166, booking_id: "mock-bk-5" },
+            { date: ymd(now.toISOString()), value: 168, booking_id: "mock-bk-6" }
           ],
-          current: 248, delta_vs_previous: 7
+          current: 168, delta_vs_previous: 2
         },
         ball_speed: {
           series: [
-            { date: ymd(daysAgo(21)), value: 122.1, booking_id: "mock-bk-1" },
-            { date: ymd(daysAgo(14)), value: 124.3, booking_id: "mock-bk-2" },
-            { date: ymd(daysAgo(9)),  value: 126.0, booking_id: "mock-bk-3" },
-            { date: ymd(daysAgo(5)),  value: 128.8, booking_id: "mock-bk-4" },
-            { date: ymd(daysAgo(2)),  value: 129.4, booking_id: "mock-bk-5" },
-            { date: ymd(now.toISOString()), value: 132.7, booking_id: "mock-bk-6" }
+            { date: ymd(daysAgo(21)), value: 121.4, booking_id: "mock-bk-1" },
+            { date: ymd(daysAgo(14)), value: 122.8, booking_id: "mock-bk-2" },
+            { date: ymd(daysAgo(9)),  value: 124.0, booking_id: "mock-bk-3" },
+            { date: ymd(daysAgo(5)),  value: 123.6, booking_id: "mock-bk-4" },
+            { date: ymd(daysAgo(2)),  value: 125.3, booking_id: "mock-bk-5" },
+            { date: ymd(now.toISOString()), value: 126.1, booking_id: "mock-bk-6" }
           ],
-          current: 132.7, delta_vs_previous: 3.3
+          current: 126.1, delta_vs_previous: 0.8
         },
         smash: {
           series: [
-            { date: ymd(daysAgo(21)), value: 1.32, booking_id: "mock-bk-1" },
-            { date: ymd(daysAgo(14)), value: 1.34, booking_id: "mock-bk-2" },
-            { date: ymd(daysAgo(9)),  value: 1.36, booking_id: "mock-bk-3" },
-            { date: ymd(daysAgo(5)),  value: 1.37, booking_id: "mock-bk-4" },
-            { date: ymd(daysAgo(2)),  value: 1.38, booking_id: "mock-bk-5" },
+            { date: ymd(daysAgo(21)), value: 1.36, booking_id: "mock-bk-1" },
+            { date: ymd(daysAgo(14)), value: 1.37, booking_id: "mock-bk-2" },
+            { date: ymd(daysAgo(9)),  value: 1.38, booking_id: "mock-bk-3" },
+            { date: ymd(daysAgo(5)),  value: 1.39, booking_id: "mock-bk-4" },
+            { date: ymd(daysAgo(2)),  value: 1.40, booking_id: "mock-bk-5" },
             { date: ymd(now.toISOString()), value: 1.41, booking_id: "mock-bk-6" }
           ],
-          current: 1.41, delta_vs_previous: 0.03
+          current: 1.41, delta_vs_previous: 0.01
         }
       }
     },
@@ -1901,9 +2056,88 @@ function renderTrendsChips(data) {
     });
     wrap.appendChild(btn);
   };
-  mk("all clubs", "all");
+  // Trends per-club charts ONLY — "all clubs" would average across irons,
+  // wedges, driver, etc. which has no useful meaning. Bag ladder +
+  // improvements above already convey the multi-club view.
   clubs.forEach(c => mk(clubLabel(c.club), c.club));
   wireChipRowFade(wrap);
+}
+
+// Bag distance ladder — list of clubs sorted by avg carry desc, each row
+// has a horizontal bar proportional to avg carry. Reveals distance gaps
+// in the bag at a glance (the unique-to-a-sim insight a course can't give).
+function renderBagLadder(data) {
+  const wrap = $('#trends-bag-ladder');
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const rows = Array.isArray(data?.bag_ladder) ? data.bag_ladder : [];
+  if (rows.length === 0) {
+    wrap.innerHTML = `<p style="color:var(--dim); font-size:13px;">not enough club data yet.</p>`;
+    return;
+  }
+  const maxCarry = rows.reduce((m, r) => Math.max(m, r.avg_carry || 0), 1);
+  rows.forEach((r) => {
+    const widthPct = Math.max(6, (r.avg_carry / maxCarry) * 100);
+    const row = document.createElement('div');
+    row.className = "bag-row";
+    row.innerHTML = `
+      <span class="bag-tag">${esc(clubShort(r.club))}</span>
+      <div class="bag-bar-wrap">
+        <span class="bag-name">${esc(clubLabel(r.club))}</span>
+        <span class="bag-bar"><span style="width:${widthPct.toFixed(1)}%"></span></span>
+      </div>
+      <span class="bag-carry">${Math.round(r.avg_carry)}<span class="bag-unit">yds avg</span></span>
+    `;
+    wrap.appendChild(row);
+  });
+}
+
+// Per-club improvement deltas — recent half-window vs previous half-window.
+// Surfaces "your 7-iron carry is up 4 yds" without forcing the user to
+// squint at the chart. Skips clubs that don't have enough data on both
+// sides of the split.
+function renderImprovements(data) {
+  const wrap = $('#trends-improvements');
+  const section = $('#trends-improvements-section');
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const rows = Array.isArray(data?.improvements) ? data.improvements : [];
+  // Only show rows with at least one delta computed (>= 3 shots in each half).
+  const meaningful = rows.filter((r) =>
+    r.carry_delta != null || r.smash_delta != null || r.launch_delta != null
+  );
+  if (meaningful.length === 0) {
+    if (section) section.classList.add('hidden');
+    return;
+  }
+  if (section) section.classList.remove('hidden');
+
+  const arrow = (d) => d == null ? "—" : (d > 0 ? "↑" : (d < 0 ? "↓" : "·"));
+  const cls   = (d) => d == null ? "" : (Math.abs(d) < 1e-6 ? "flat" : (d > 0 ? "up" : "down"));
+  const fmt   = (d, digits, unit) => {
+    if (d == null) return "—";
+    const sign = d > 0 ? "+" : "";
+    return `${sign}${d.toFixed(digits)}${unit ? unit : ""}`;
+  };
+
+  meaningful.forEach((r) => {
+    const row = document.createElement('div');
+    row.className = "imp-row";
+    const deltas = [
+      { metric: "CARRY",  d: r.carry_delta,  digits: 0, unit: "y" },
+      { metric: "SMASH",  d: r.smash_delta,  digits: 2, unit: ""  },
+      { metric: "LAUNCH", d: r.launch_delta, digits: 1, unit: "°" },
+    ].filter((x) => x.d != null);
+    const deltasHTML = deltas.map((x) =>
+      `<span class="imp-delta ${cls(x.d)}"><span class="imp-metric">${x.metric}</span>${arrow(x.d)} ${fmt(x.d, x.digits, x.unit)}</span>`
+    ).join("");
+    row.innerHTML = `
+      <span class="imp-tag">${esc(clubShort(r.club))}</span>
+      <span class="imp-name">${esc(clubLabel(r.club))}</span>
+      <div class="imp-deltas">${deltasHTML}</div>
+    `;
+    wrap.appendChild(row);
+  });
 }
 
 function paintTrendsBody(data) {
@@ -1911,6 +2145,8 @@ function paintTrendsBody(data) {
   const gate  = $('#trends-gate');
   const gateBody = $('#trends-gate-body');
   const eyebrow = $('#trends-eyebrow');
+  const bagSection = $('#trends-bag-section');
+  const chartsSection = $('#trends-charts-section');
   body.innerHTML = "";
 
   if (!data) return;
@@ -1918,16 +2154,29 @@ function paintTrendsBody(data) {
   const total = data.total_sessions || 0;
   if (!data.ready || total < 3) {
     eyebrow.classList.add('hidden');
+    if (bagSection) bagSection.classList.add('hidden');
+    if (chartsSection) chartsSection.classList.add('hidden');
     gate.classList.remove('hidden');
     gateBody.innerHTML = `you have ${total}.`;
     return;
   }
   eyebrow.classList.remove('hidden');
+  if (bagSection) bagSection.classList.remove('hidden');
+  if (chartsSection) chartsSection.classList.remove('hidden');
   gate.classList.add('hidden');
 
-  const clubLabelStr = _trendsClubFilter === "all"
-    ? "ALL CLUBS"
-    : clubLabel(_trendsClubFilter).toUpperCase();
+  // Render the two multi-club sections (bag ladder + improvements) first.
+  // These don't depend on the active club filter.
+  renderBagLadder(data);
+  renderImprovements(data);
+
+  // Per-club charts default to the most-hit club ("all" was a meaningless
+  // multi-club average). If somehow _trendsClubFilter is still "all", swap
+  // to default_club from the server.
+  if (_trendsClubFilter === "all" && data.default_club) {
+    _trendsClubFilter = data.default_club;
+  }
+  const clubLabelStr = clubLabel(_trendsClubFilter).toUpperCase();
   const windowN = Math.min(6, total);
   eyebrow.textContent = `${clubLabelStr} · LAST ${windowN} SESSIONS`;
 
@@ -1938,10 +2187,8 @@ function paintTrendsBody(data) {
     { key: 'smash',      label: 'SMASH FACTOR', unit: '',    digits: 2, stroke: 'var(--blue)' }
   ];
 
-  // Drill-down is only meaningful when the user has filtered to a specific
-  // club — "all clubs" points are multi-club averages and tapping into one
-  // wouldn't map to a single club detail view.
-  const drillable = _trendsClubFilter !== "all";
+  // Per-club charts always drillable now — there's no "all clubs" option.
+  const drillable = true;
 
   specs.forEach(spec => {
     const chart = charts[spec.key];
@@ -2113,7 +2360,10 @@ async function loadView(name) {
       showView('history');
     } else if (name === 'trends') {
       _trendsData = data;
-      _trendsClubFilter = "all";
+      // Default to the most-hit club so the per-club chart is meaningful on
+      // first open. Falls back to "all" only if the server gave no default
+      // (e.g. cold-start before any sessions exist).
+      _trendsClubFilter = (data && data.default_club) || "all";
       renderTrendsChips(data || { lifetime_clubs: [] });
       paintTrendsBody(data);
       showView('trends');

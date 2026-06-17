@@ -200,11 +200,39 @@ interface LifetimeClubRow {
   shots: number;
 }
 
+interface BagLadderRow {
+  club: string;             // club code; canvas formats label
+  shots: number;
+  avg_carry: number;        // sorted descending across rows
+  best_carry: number | null;
+}
+
+interface ClubImprovement {
+  club: string;
+  // null when fewer than 2 sessions of data for the club in the window
+  carry_delta: number | null;
+  smash_delta: number | null;
+  launch_delta: number | null;
+  sessions_recent: number;
+  sessions_previous: number;
+}
+
 interface TrendsReadyResponse {
   ready: true;
   total_sessions: number;
   selected_club: "all" | string;
   lifetime_clubs: LifetimeClubRow[];
+  // The chart-default club: most-hit club inside the trends window so
+  // "all clubs" doesn't show a meaningless multi-club average.
+  default_club: string | null;
+  // Avg carry per club (across the trends window), sorted DESC — surfaces
+  // bag distance gaps at a glance ("my 7-iron is only 5 yds longer than
+  // my 8-iron — there's a hole there").
+  bag_ladder: BagLadderRow[];
+  // Recent vs previous half-window delta per club, on the headline metrics.
+  // Lets the canvas say "your 7-iron carry is up 4 yds over the last 3
+  // sessions" without the user squinting at the chart.
+  improvements: ClubImprovement[];
   charts: {
     carry: TrendsChart;
     ball_speed: TrendsChart;
@@ -2125,16 +2153,46 @@ async function handleTrends(
 
   // Last 6 sessions, oldest -> newest. Also grab optix_booking_id so the
   // canvas can navigate from a chart point into that session's club detail.
+  const TRENDS_SESSIONS = 6;
   const { data: sessions, error: sessErr } = await sb
     .from("sessions")
     .select("id, started_at, optix_booking_id")
     .eq("player_id", player.id)
     .order("started_at", { ascending: false })
-    .limit(6);
+    .limit(TRENDS_SESSIONS);
   if (sessErr) {
     return errorResponse(req, 500, "trends_query_failed", sessErr.message);
   }
   const ordered = [...(sessions ?? [])].reverse();
+  const sessionIds = ordered.map((s) => s.id as string);
+
+  // Single batch query for every shot in the window. Drives the per-session
+  // chart points, the bag-distance ladder, AND the per-club improvement
+  // deltas — all derived in-memory so we don't fan out 6+ small queries.
+  const { data: allShots } = await sb
+    .from("shots")
+    .select("club, carry_distance, ball_speed, club_speed, vla, session_id")
+    .in("session_id", sessionIds);
+  const allRows = (allShots ?? []) as Array<{
+    club: string | null;
+    carry_distance: number | null;
+    ball_speed: number | null;
+    club_speed: number | null;
+    vla: number | null;
+    session_id: string;
+  }>;
+  const computedSmash = (r: { ball_speed: number | null; club_speed: number | null }): number | null =>
+    r.ball_speed != null && r.club_speed != null && r.club_speed > 0
+      ? r.ball_speed / r.club_speed
+      : null;
+
+  // ----- Per-session chart points (filtered by selected club) ------------
+  const shotsBySession = new Map<string, typeof allRows>();
+  for (const r of allRows) {
+    const list = shotsBySession.get(r.session_id) ?? [];
+    list.push(r);
+    shotsBySession.set(r.session_id, list);
+  }
 
   type Point = {
     date: string;
@@ -2143,35 +2201,20 @@ async function handleTrends(
     ball_speed: number | null;
     smash: number | null;
   };
-  const points: Point[] = [];
-
-  for (const sess of ordered) {
-    // Same column-name fix as shotsForSession — `smash` doesn't exist
-    // on the table, derive it from ball_speed / club_speed.
-    let q = sb.from("shots").select("carry_distance, ball_speed, club_speed, club").eq("session_id", sess.id);
-    if (clubFilter) q = q.eq("club", clubFilter);
-    const { data: shots } = await q;
-    const rows = (shots ?? []) as Array<{
-      carry_distance: number | null;
-      ball_speed: number | null;
-      club_speed: number | null;
-      club: string | null;
-    }>;
-    const carries = rows.map((r) => r.carry_distance).filter((v): v is number => v != null);
-    const speeds = rows.map((r) => r.ball_speed).filter((v): v is number => v != null);
-    const smashes = rows
-      .map((r) => (r.ball_speed != null && r.club_speed != null && r.club_speed > 0
-        ? r.ball_speed / r.club_speed
-        : null))
-      .filter((v): v is number => v != null);
-    points.push({
-      date: sess.started_at.slice(0, 10),
+  const points: Point[] = ordered.map((sess) => {
+    const rows = shotsBySession.get(sess.id as string) ?? [];
+    const scoped = clubFilter ? rows.filter((r) => r.club === clubFilter) : rows;
+    const carries = scoped.map((r) => r.carry_distance).filter((v): v is number => v != null);
+    const speeds = scoped.map((r) => r.ball_speed).filter((v): v is number => v != null);
+    const smashes = scoped.map(computedSmash).filter((v): v is number => v != null);
+    return {
+      date: (sess.started_at as string).slice(0, 10),
       booking_id: (sess as { optix_booking_id?: string | null }).optix_booking_id ?? null,
-      carry: mean(carries),     // session avg carry; "max per session" wasn't useful as a trend
+      carry: mean(carries),
       ball_speed: mean(speeds),
       smash: mean(smashes),
-    });
-  }
+    };
+  });
 
   const buildSeries = (key: "carry" | "ball_speed" | "smash"): TrendsChart => {
     const series: TrendsSeriesPoint[] = points
@@ -2190,11 +2233,134 @@ async function handleTrends(
     };
   };
 
+  // ----- Bag distance ladder + default club ------------------------------
+  // Per-club aggregates across the trends window. Drives the bag ladder
+  // (avg carry sorted desc) and identifies the most-hit club to use as the
+  // chart default — replacing the meaningless "ALL CLUBS" average.
+  type ClubBucket = {
+    shots: number;
+    carries: number[];
+    bestCarry: number | null;
+    speeds: number[];
+    clubSpeeds: number[];
+    launches: number[];
+  };
+  const clubBuckets = new Map<string, ClubBucket>();
+  for (const r of allRows) {
+    if (!r.club) continue;
+    const b = clubBuckets.get(r.club) ?? {
+      shots: 0, carries: [], bestCarry: null, speeds: [], clubSpeeds: [], launches: [],
+    };
+    b.shots++;
+    if (r.carry_distance != null) {
+      b.carries.push(r.carry_distance);
+      if (b.bestCarry == null || r.carry_distance > b.bestCarry) b.bestCarry = r.carry_distance;
+    }
+    if (r.ball_speed != null) b.speeds.push(r.ball_speed);
+    if (r.club_speed != null) b.clubSpeeds.push(r.club_speed);
+    if (r.vla != null) b.launches.push(r.vla);
+    clubBuckets.set(r.club, b);
+  }
+
+  const bagLadder: BagLadderRow[] = [];
+  let mostHitClub: string | null = null;
+  let mostHitCount = 0;
+  for (const [c, b] of clubBuckets) {
+    const avg = mean(b.carries);
+    if (avg == null) continue;
+    bagLadder.push({
+      club: c,
+      shots: b.shots,
+      avg_carry: Math.round(avg * 10) / 10,
+      best_carry: b.bestCarry != null ? Math.round(b.bestCarry * 10) / 10 : null,
+    });
+    if (b.shots > mostHitCount) {
+      mostHitCount = b.shots;
+      mostHitClub = c;
+    }
+  }
+  bagLadder.sort((a, b) => b.avg_carry - a.avg_carry);
+
+  // ----- Per-club improvement deltas (recent vs previous half) -----------
+  // Split the window into halves so we have a recent vs previous reading.
+  // Require at least one session in each half AND ≥3 shots per side for any
+  // delta to surface; below that the signal is too noisy.
+  const half = Math.floor(sessionIds.length / 2);
+  const previousSet = new Set(sessionIds.slice(0, half));
+  const recentSet = new Set(sessionIds.slice(half));
+
+  type HalfBucket = {
+    recentCarries: number[];
+    prevCarries: number[];
+    recentSmashes: number[];
+    prevSmashes: number[];
+    recentLaunches: number[];
+    prevLaunches: number[];
+    recentSessions: Set<string>;
+    prevSessions: Set<string>;
+  };
+  const halfBuckets = new Map<string, HalfBucket>();
+  for (const r of allRows) {
+    if (!r.club) continue;
+    const b = halfBuckets.get(r.club) ?? {
+      recentCarries: [], prevCarries: [],
+      recentSmashes: [], prevSmashes: [],
+      recentLaunches: [], prevLaunches: [],
+      recentSessions: new Set<string>(), prevSessions: new Set<string>(),
+    };
+    const smash = computedSmash(r);
+    if (recentSet.has(r.session_id)) {
+      if (r.carry_distance != null) b.recentCarries.push(r.carry_distance);
+      if (smash != null) b.recentSmashes.push(smash);
+      if (r.vla != null) b.recentLaunches.push(r.vla);
+      b.recentSessions.add(r.session_id);
+    } else if (previousSet.has(r.session_id)) {
+      if (r.carry_distance != null) b.prevCarries.push(r.carry_distance);
+      if (smash != null) b.prevSmashes.push(smash);
+      if (r.vla != null) b.prevLaunches.push(r.vla);
+      b.prevSessions.add(r.session_id);
+    }
+    halfBuckets.set(r.club, b);
+  }
+
+  const improvements: ClubImprovement[] = [];
+  for (const [c, b] of halfBuckets) {
+    const enough = (arr: number[]) => arr.length >= 3;
+    const delta = (recent: number[], prev: number[]): number | null => {
+      if (!enough(recent) || !enough(prev)) return null;
+      const r = mean(recent);
+      const p = mean(prev);
+      if (r == null || p == null) return null;
+      return r - p;
+    };
+    improvements.push({
+      club: c,
+      carry_delta: round1(delta(b.recentCarries, b.prevCarries)),
+      smash_delta: (() => {
+        const d = delta(b.recentSmashes, b.prevSmashes);
+        return d != null ? Math.round(d * 100) / 100 : null;
+      })(),
+      launch_delta: round1(delta(b.recentLaunches, b.prevLaunches)),
+      sessions_recent: b.recentSessions.size,
+      sessions_previous: b.prevSessions.size,
+    });
+  }
+  // Sort improvements by |carry_delta| desc (most movement first), with
+  // null-deltas at the bottom.
+  improvements.sort((a, b) => {
+    const av = a.carry_delta == null ? -Infinity : Math.abs(a.carry_delta);
+    const bv = b.carry_delta == null ? -Infinity : Math.abs(b.carry_delta);
+    return bv - av;
+  });
+
   return jsonResponse(req, <TrendsReadyResponse>{
     ready: true,
     total_sessions: total,
     selected_club: club === "all" ? "all" : club,
     lifetime_clubs: lifetimeClubs,
+    default_club: mostHitClub,
+    bag_ladder: bagLadder,
+    improvements,
     charts: {
       carry: buildSeries("carry"),
       ball_speed: buildSeries("ball_speed"),
