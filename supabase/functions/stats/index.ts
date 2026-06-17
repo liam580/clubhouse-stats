@@ -221,6 +221,44 @@ interface TrendsNotReadyResponse {
 
 type TrendsResponse = TrendsReadyResponse | TrendsNotReadyResponse;
 
+// ----- Player / Lifetime summary view -----------------------------------------
+
+interface PlayerClubRow {
+  club: string;
+  shots: number;
+  avg_carry: number | null;
+  avg_smash: number | null;
+  smash_status: "in" | "above" | "below" | "n/a";  // vs published per-club window
+  smash_score: number;                              // 0..1+, used for ranking
+}
+
+interface PlayerTimeBucket {
+  bucket: "morning" | "afternoon" | "evening";
+  label: string;       // human-readable hour band
+  shots: number;
+  avg_smash: number | null;
+  avg_carry: number | null;
+}
+
+interface PlayerTimeOfDay {
+  buckets: PlayerTimeBucket[];
+  best_window: "morning" | "afternoon" | "evening" | null;
+  best_window_reason: string | null;
+}
+
+interface PlayerResponse {
+  player: Player;
+  total_sessions: number;
+  total_shots: number;
+  // Note shown beside the headline number, in case we capped the scan ("most
+  // recent 2000 shots") vs all-time. Lets the canvas be honest about scope.
+  shot_window_note: string;
+  best_clubs: PlayerClubRow[];          // top 3 by smash quality, min 10 shots
+  recurring_strengths: TakeawayLine[];  // top STRENGTH lines from lifetime per-club aggs
+  recurring_watches: TakeawayLine[];    // top WATCH lines
+  time_of_day: PlayerTimeOfDay;
+}
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
@@ -518,6 +556,7 @@ function isIronOrWedge(club: string): boolean {
 interface PerClubAgg {
   club: string;
   shots: number;
+  avgCarry: number | null;
   avgSmash: number | null;
   avgLaunch: number | null;
   avgAttack: number | null;
@@ -545,6 +584,7 @@ function aggregatePerClub(shots: ShotRow[]): PerClubAgg[] {
     out.push({
       club,
       shots: list.length,
+      avgCarry: mean(carries),
       avgSmash: mean(smashes),
       avgLaunch: mean(launches),
       avgAttack: mean(attacks),
@@ -1597,6 +1637,18 @@ async function handleSession(
   // returns nulls for low-data sessions; the canvas hides empty rows.
   const observations = pickTakeawayObservations(shots);
 
+  // "Club of the day" — uses the real STRENGTH when present. If no metric
+  // crossed a STRENGTH threshold this session, fall back to the most-hit
+  // club so the hero is always populated (soft fallback). The takeaway
+  // STRENGTH line stays null in that case — it remains a strict signal.
+  let featuredStrength: TakeawayLine | null = observations.strength;
+  if (!featuredStrength && agg.most_hit_club && agg.most_hit_shots != null && agg.most_hit_shots > 0) {
+    featuredStrength = {
+      club: agg.most_hit_club,
+      text: `{club} most-hit — ${agg.most_hit_shots} shots this session.`,
+    };
+  }
+
   const response: SessionResponse = {
     player: {
       display_name: player.display_name ?? null,
@@ -1622,7 +1674,7 @@ async function handleSession(
       total_shots: totalShots,
       sparkline_max_carry: sparkline,
       delta_vs_previous_session: safeDelta(agg.avg_carry, prevAgg?.avg_carry ?? null),
-      featured_strength: observations.strength,
+      featured_strength: featuredStrength,
     },
     stats: {
       ball_speed: {
@@ -1660,6 +1712,223 @@ async function handleSession(
       watch: observations.watch,
       fallback_text: fallback,
     },
+  };
+
+  return jsonResponse(req, response);
+}
+
+// ---------------------------------------------------------------------------
+// View: player (lifetime aggregates)
+// ---------------------------------------------------------------------------
+
+// Map a raw DB shot row to a ShotRow with derived fields (smash / face_to_path).
+// Lifted to a helper so handlePlayer can reuse the same field semantics the
+// per-session paths use, without duplicating the column-to-ShotRow logic.
+function mapDbShotRow(r: Record<string, unknown>): ShotRow {
+  const ballSpeed = r.ball_speed as number | null | undefined;
+  const clubSpeed = r.club_speed as number | null | undefined;
+  const faceToTarget = r.face_to_target as number | null | undefined;
+  const path = r.path as number | null | undefined;
+  return {
+    club: (r.club as string | null) ?? null,
+    carry_distance: (r.carry_distance as number | null) ?? null,
+    ball_speed: ballSpeed ?? null,
+    vla: (r.vla as number | null) ?? null,
+    smash: ballSpeed != null && clubSpeed != null && clubSpeed > 0
+      ? ballSpeed / clubSpeed
+      : null,
+    attack_angle: (r.attack_angle as number | null) ?? null,
+    total_spin: (r.total_spin as number | null) ?? null,
+    club_path: path ?? null,
+    face_to_target: faceToTarget ?? null,
+    face_to_path: faceToTarget != null && path != null
+      ? faceToTarget - path
+      : null,
+    created_at: (r.recorded_at as string | null) ?? null,
+  };
+}
+
+// 0..1+ score for ranking clubs by smash quality. In window → 0.6..1.0
+// depending on position; at or above the upper bound → 1.0+ ; below window
+// → 0..0.5 decreasing with gap. Driver capped at 1.0 since 1.50 is the USGA
+// ceiling and anything above is calibration noise.
+function smashQualityScore(avgSmash: number | null, bench: ClubBench | null, club: string): number {
+  if (avgSmash == null || !bench) return 0;
+  const [lo, hi] = bench.smash;
+  const isDriver = club.toUpperCase() === "DRIVER";
+  if (avgSmash >= hi) {
+    if (isDriver) return 1.0;
+    return 1.0 + Math.min(0.2, (avgSmash - hi));
+  }
+  if (avgSmash < lo) {
+    const gap = lo - avgSmash;
+    return Math.max(0, 0.5 - gap * 2);
+  }
+  const denom = Math.max(0.001, hi - lo);
+  return 0.6 + ((avgSmash - lo) / denom) * 0.4;
+}
+
+function timeBucketForHour(hour: number): "morning" | "afternoon" | "evening" {
+  if (hour < 11) return "morning";
+  if (hour < 17) return "afternoon";
+  return "evening";
+}
+
+function bucketLabel(bucket: "morning" | "afternoon" | "evening"): string {
+  if (bucket === "morning") return "Morning (5–11 AM)";
+  if (bucket === "afternoon") return "Afternoon (11 AM – 5 PM)";
+  return "Evening (5 PM – 10 PM)";
+}
+
+function computeTimeOfDay(shots: ShotRow[]): PlayerTimeOfDay {
+  type Bucket = {
+    shots: ShotRow[];
+  };
+  const buckets: Record<"morning" | "afternoon" | "evening", Bucket> = {
+    morning:   { shots: [] },
+    afternoon: { shots: [] },
+    evening:   { shots: [] },
+  };
+
+  for (const s of shots) {
+    if (!s.created_at) continue;
+    const d = new Date(s.created_at);
+    const h = d.getHours();
+    buckets[timeBucketForHour(h)].shots.push(s);
+  }
+
+  const out: PlayerTimeBucket[] = (["morning", "afternoon", "evening"] as const).map((b) => {
+    const set = buckets[b].shots;
+    const smashes = set.map((s) => s.smash).filter((v): v is number => v != null);
+    const carries = set.map((s) => s.carry_distance).filter((v): v is number => v != null);
+    return {
+      bucket: b,
+      label: bucketLabel(b),
+      shots: set.length,
+      avg_smash: smashes.length ? Number(mean(smashes)!.toFixed(2)) : null,
+      avg_carry: carries.length ? round1(mean(carries)) : null,
+    };
+  });
+
+  // Best window — highest avg smash, with a minimum-shots gate so a single
+  // outlier doesn't crown a bucket. If none qualify, leave null.
+  const eligible = out.filter((b) => b.shots >= 10 && b.avg_smash != null);
+  let best: PlayerTimeBucket | null = null;
+  for (const b of eligible) {
+    if (!best || (b.avg_smash ?? 0) > (best.avg_smash ?? 0)) best = b;
+  }
+  return {
+    buckets: out,
+    best_window: best ? best.bucket : null,
+    best_window_reason: best && best.avg_smash != null
+      ? `highest avg smash (${best.avg_smash.toFixed(2)})`
+      : null,
+  };
+}
+
+async function handlePlayer(
+  req: Request,
+  sb: SupabaseClient,
+  optixUserId: string,
+): Promise<Response> {
+  const player = await lookupPlayer(sb, optixUserId);
+
+  const emptyResponse: PlayerResponse = {
+    player: { display_name: null, optix_user_id: optixUserId },
+    total_sessions: 0,
+    total_shots: 0,
+    shot_window_note: "no data yet",
+    best_clubs: [],
+    recurring_strengths: [],
+    recurring_watches: [],
+    time_of_day: { buckets: [], best_window: null, best_window_reason: null },
+  };
+
+  if (!player) return jsonResponse(req, emptyResponse);
+  emptyResponse.player.display_name = player.display_name ?? null;
+
+  // Session count (cheap head-only request).
+  const { count: sessionCount } = await sb
+    .from("sessions")
+    .select("id", { count: "exact", head: true })
+    .eq("player_id", player.id);
+
+  // Pull recent shots, capped. Two thousand shots is enough to compute stable
+  // lifetime aggregates without unbounded query latency. The shot_window_note
+  // tells the canvas whether we capped or not.
+  const SHOT_CAP = 2000;
+  const { data: shotRows, error } = await sb
+    .from("shots")
+    .select(
+      "club, carry_distance, ball_speed, vla, club_speed, attack_angle, total_spin, face_to_target, path, recorded_at",
+    )
+    .eq("player_id", player.id)
+    .order("recorded_at", { ascending: false })
+    .limit(SHOT_CAP);
+  if (error) return errorResponse(req, 500, "player_query_failed", error.message);
+
+  const shots = (shotRows ?? []).map(mapDbShotRow);
+  if (shots.length === 0) {
+    return jsonResponse(req, {
+      ...emptyResponse,
+      total_sessions: sessionCount ?? 0,
+    });
+  }
+
+  const perClubAggs = aggregatePerClub(shots);
+
+  // Best clubs — rank by smash quality, require ≥10 lifetime shots per club.
+  const bestClubs: PlayerClubRow[] = perClubAggs
+    .filter((a) => a.shots >= 10)
+    .map((agg) => {
+      const bench = clubBenchmark(agg.club);
+      const status = classifyMetric(agg.avgSmash, bench?.smash ?? null);
+      return {
+        club: agg.club,
+        shots: agg.shots,
+        avg_carry: agg.avgCarry != null ? round1(agg.avgCarry) : null,
+        avg_smash: agg.avgSmash != null ? Number(agg.avgSmash.toFixed(2)) : null,
+        smash_status: status,
+        smash_score: smashQualityScore(agg.avgSmash, bench, agg.club),
+      };
+    })
+    .sort((a, b) => b.smash_score - a.smash_score)
+    .slice(0, 3);
+
+  // Recurring strengths/watches: feed lifetime per-club aggs through the same
+  // candidate generator the per-session takeaway uses. Tighter shot threshold
+  // (10 vs 5) since we have more data to spend.
+  const allCandidates: Candidate[] = [];
+  for (const agg of perClubAggs) {
+    if (agg.shots < 10) continue;
+    const bench = clubBenchmark(agg.club);
+    if (!bench) continue;
+    allCandidates.push(...generateCandidates(agg, bench));
+  }
+  const recurringStrengths: TakeawayLine[] = allCandidates
+    .filter((c) => c.kind === "strength")
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((c) => ({ club: c.club, text: c.text }));
+  const recurringWatches: TakeawayLine[] = allCandidates
+    .filter((c) => c.kind === "watch")
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((c) => ({ club: c.club, text: c.text }));
+
+  const timeOfDay = computeTimeOfDay(shots);
+
+  const response: PlayerResponse = {
+    player: { display_name: player.display_name ?? null, optix_user_id: optixUserId },
+    total_sessions: sessionCount ?? 0,
+    total_shots: shots.length,
+    shot_window_note: shots.length >= SHOT_CAP
+      ? `most recent ${SHOT_CAP} shots`
+      : "all-time",
+    best_clubs: bestClubs,
+    recurring_strengths: recurringStrengths,
+    recurring_watches: recurringWatches,
+    time_of_day: timeOfDay,
   };
 
   return jsonResponse(req, response);
@@ -1958,7 +2227,7 @@ serve(async (req: Request) => {
     if (!token) {
       return errorResponse(req, 400, "missing_required_params");
     }
-    if (!["session", "history", "trends", "club"].includes(view)) {
+    if (!["session", "history", "trends", "club", "player"].includes(view)) {
       return errorResponse(req, 400, "unknown_view");
     }
     if (view === "club" && (club === "all" || !club)) {
@@ -1983,6 +2252,9 @@ serve(async (req: Request) => {
     }
     if (view === "club") {
       return await handleClubDetail(req, sb, verifiedUserId, club, bookingId);
+    }
+    if (view === "player") {
+      return await handlePlayer(req, sb, verifiedUserId);
     }
     return await handleTrends(req, sb, verifiedUserId, club);
   } catch (err) {

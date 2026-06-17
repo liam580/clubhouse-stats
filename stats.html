@@ -82,7 +82,7 @@
   /* ── TAB BAR ─────────────────────────────────────────────── */
   .tabs {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 4px;
     padding: 4px;
     border-radius: 999px;
@@ -96,10 +96,10 @@
     color: var(--cream);
     font-family: 'Bai Jamjuree', system-ui, sans-serif;
     font-weight: 400;
-    font-size: 11px;
-    letter-spacing: 2.5px;
+    font-size: 10px;
+    letter-spacing: 1.8px;
     text-transform: uppercase;
-    padding: 12px 8px;
+    padding: 12px 4px;
     min-height: 44px;
     border-radius: 999px;
     cursor: pointer;
@@ -746,6 +746,7 @@
       <button class="tab" role="tab" id="tab-session"  aria-selected="true"  tabindex="0"  data-view="session">session</button>
       <button class="tab" role="tab" id="tab-history"  aria-selected="false" tabindex="-1" data-view="history">history</button>
       <button class="tab" role="tab" id="tab-trends"   aria-selected="false" tabindex="-1" data-view="trends">trends</button>
+      <button class="tab" role="tab" id="tab-player"   aria-selected="false" tabindex="-1" data-view="player">player</button>
     </nav>
 
     <!-- STATE SLOTS -->
@@ -853,6 +854,27 @@
         <h2 class="state-title">trends unlock at 3 sessions</h2>
         <p class="state-body" id="trends-gate-body"></p>
       </div>
+    </section>
+
+    <!-- ─── POPULATED: PLAYER ─── -->
+    <section id="view-player" class="view hidden" role="tabpanel" aria-labelledby="tab-player">
+      <p class="eyebrow" id="player-eyebrow">YOUR PROFILE · LIFETIME</p>
+      <h3 class="section-title" id="player-summary-line">— sessions · — shots</h3>
+
+      <p class="eyebrow dim">BEST CLUBS</p>
+      <div id="player-best-clubs"></div>
+
+      <p class="eyebrow dim" style="margin-top:24px;">STRENGTHS</p>
+      <div id="player-strengths"></div>
+
+      <p class="eyebrow dim" style="margin-top:24px;">WATCH</p>
+      <div id="player-watches"></div>
+
+      <p class="eyebrow dim" style="margin-top:24px;">TIME OF DAY</p>
+      <h3 class="section-title" id="player-best-time">when you play your best</h3>
+      <div id="player-time-of-day"></div>
+
+      <p id="player-window-note" style="margin-top:20px;font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim2);"></p>
     </section>
   </main>
 
@@ -1063,6 +1085,34 @@ const __MOCK_DATA__ = (() => {
         face_to_target: -0.4 + (i % 4) * 0.2,
         face_to_path: -1.2 + (i % 4) * 0.15
       }))
+    },
+    player: {
+      player: { display_name: "L. Hyde", optix_user_id: "mock_user" },
+      total_sessions: 12,
+      total_shots: 487,
+      shot_window_note: "all-time",
+      best_clubs: [
+        { club: "DRIVER", shots: 96,  avg_carry: 244, avg_smash: 1.49, smash_status: "in",    smash_score: 0.95 },
+        { club: "IRON7",  shots: 168, avg_carry: 165, avg_smash: 1.40, smash_status: "above", smash_score: 1.05 },
+        { club: "PW",     shots: 78,  avg_carry: 115, avg_smash: 1.28, smash_status: "in",    smash_score: 0.72 }
+      ],
+      recurring_strengths: [
+        { club: "DRIVER", text: "{club} smash factor 1.49 across 96 shots — in the 1.45–1.50 benchmark." },
+        { club: "DRIVER", text: "{club} attack angle +3.1° avg across 96 shots — in the +2 to +5° window." }
+      ],
+      recurring_watches: [
+        { club: "IRON7", text: "{club} smash factor 1.40 across 168 shots — above the 1.30–1.38 tour-elite window. Common causes: strong-lofted irons, a hot face, or delofting at impact." },
+        { club: "IRON7", text: "{club} launched 17.3° avg across 168 shots — below the 18–23° window — lower trajectory, less peak height." }
+      ],
+      time_of_day: {
+        buckets: [
+          { bucket: "morning",   label: "Morning (5–11 AM)",       shots: 64,  avg_smash: 1.43, avg_carry: 168 },
+          { bucket: "afternoon", label: "Afternoon (11 AM – 5 PM)", shots: 287, avg_smash: 1.41, avg_carry: 164 },
+          { bucket: "evening",   label: "Evening (5 PM – 10 PM)",   shots: 136, avg_smash: 1.38, avg_carry: 159 }
+        ],
+        best_window: "morning",
+        best_window_reason: "highest avg smash (1.43)"
+      }
     }
   };
 })();
@@ -1865,6 +1915,7 @@ const views = {
   history: $('#view-history'),
   trends:  $('#view-trends'),
   club:    $('#view-club'),
+  player:  $('#view-player'),
 };
 
 function showState(name) {
@@ -1956,6 +2007,10 @@ async function loadView(name) {
       renderTrendsChips(data || { lifetime_clubs: [] });
       paintTrendsBody(data);
       showView('trends');
+    } else if (name === 'player') {
+      renderPlayer(data);
+      showView('player');
+      window.scrollTo({ top: 0, behavior: 'instant' });
     }
   } catch (err) {
     console.error('[clubhouse:stats] load failed', err);
@@ -2097,6 +2152,142 @@ function renderClubDetail(data) {
   // Back-label reflects where we came from. If a past booking is pinned
   // we came in from history; otherwise from the session view.
   $('#club-back-label').textContent = _pinnedBookingId ? "back to session detail" : "back to session";
+}
+
+// ── RENDER: PLAYER ───────────────────────────────────────────
+function renderPlayer(data) {
+  if (!data) return;
+
+  // Header summary line: "12 sessions · 247 shots"
+  const ss = data.total_sessions ?? 0;
+  const sh = data.total_shots ?? 0;
+  $('#player-summary-line').textContent =
+    `${ss} session${ss === 1 ? "" : "s"} · ${sh.toLocaleString()} shot${sh === 1 ? "" : "s"}`;
+
+  // Best clubs — render up to 3 rows. Each row mirrors the BY CLUB shape from
+  // the session view but the headline number is avg smash (+ status badge),
+  // not max carry. Tap a row → drill into that club's all-time view (canonical
+  // session — same handler as the session-view BY CLUB rows).
+  const bestWrap = $('#player-best-clubs');
+  bestWrap.innerHTML = "";
+  const best = Array.isArray(data.best_clubs) ? data.best_clubs : [];
+  if (best.length === 0) {
+    bestWrap.innerHTML = `<p style="color:var(--dim); font-size:13px;">not enough shots yet — keep playing.</p>`;
+  } else {
+    best.forEach((c) => {
+      const row = document.createElement('div');
+      row.className = "club-row";
+      row.setAttribute('role', 'button');
+      row.tabIndex = 0;
+      const smashDisp = c.avg_smash != null ? c.avg_smash.toFixed(2) : "—";
+      const carryDisp = c.avg_carry != null ? `${Math.round(c.avg_carry)} yd avg` : "";
+      const statusBadge = (c.smash_status && c.smash_status !== "n/a")
+        ? `<span class="badge ${c.smash_status}" style="margin-left:8px;">${c.smash_status} smash</span>`
+        : "";
+      row.innerHTML = `
+        <div class="club-row-head">
+          <span class="club-tag">${esc(clubShort(c.club))}</span>
+          <span class="club-name">${esc(clubLabel(c.club))}</span>
+          <span class="club-carry">${smashDisp}</span>
+          <span class="club-shots">· ${c.shots} shot${c.shots === 1 ? "" : "s"}${carryDisp ? ` · ${carryDisp}` : ""}</span>
+          <span class="club-chev" aria-hidden="true">›</span>
+        </div>
+        ${statusBadge ? `<div style="padding:6px 0 0 36px;">${statusBadge}</div>` : ""}
+      `;
+      row.addEventListener('click', () => {
+        // Lifetime drill — canonical-session view of that club. _pinnedBookingId
+        // stays null so the click lands in current-session mode (the closest
+        // analogue we have until we build true lifetime per-club detail).
+        loadClubDetail(c.club);
+      });
+      row.addEventListener('keydown', (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          row.click();
+        }
+      });
+      bestWrap.appendChild(row);
+    });
+  }
+
+  // Strengths / Watches — reuse the takeaway-row visual (blue STRENGTH eyebrow,
+  // maroon WATCH eyebrow). Each line is a TakeawayLine with {club} placeholder.
+  const fmtLine = (line) => {
+    if (!line || !line.text) return "";
+    return line.text.replace(/\{club\}/g, esc(clubLabel(line.club)));
+  };
+
+  const strengthsWrap = $('#player-strengths');
+  strengthsWrap.innerHTML = "";
+  const strengths = Array.isArray(data.recurring_strengths) ? data.recurring_strengths : [];
+  if (strengths.length === 0) {
+    strengthsWrap.innerHTML = `<p style="color:var(--dim); font-size:13px;">no recurring strengths yet — need more sessions.</p>`;
+  } else {
+    strengths.forEach((line) => {
+      const div = document.createElement('div');
+      div.className = "takeaway-row";
+      div.style.marginTop = "8px";
+      div.innerHTML = `
+        <p class="takeaway-row-body">${fmtLine(line)}</p>
+      `;
+      strengthsWrap.appendChild(div);
+    });
+  }
+
+  const watchesWrap = $('#player-watches');
+  watchesWrap.innerHTML = "";
+  const watches = Array.isArray(data.recurring_watches) ? data.recurring_watches : [];
+  if (watches.length === 0) {
+    watchesWrap.innerHTML = `<p style="color:var(--dim); font-size:13px;">nothing flagged — keep it up.</p>`;
+  } else {
+    watches.forEach((line) => {
+      const div = document.createElement('div');
+      div.className = "takeaway-row";
+      div.style.marginTop = "8px";
+      div.innerHTML = `
+        <p class="takeaway-row-body">${fmtLine(line)}</p>
+      `;
+      watchesWrap.appendChild(div);
+    });
+  }
+
+  // Time of day — three buckets side-by-side, highlight the best window.
+  const tod = data.time_of_day || { buckets: [] };
+  const bestTimeEl = $('#player-best-time');
+  if (tod.best_window) {
+    const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+    bestTimeEl.textContent = `${cap(tod.best_window)} · ${tod.best_window_reason ?? ""}`;
+  } else {
+    bestTimeEl.textContent = "not enough data to call it";
+  }
+
+  const todWrap = $('#player-time-of-day');
+  todWrap.innerHTML = "";
+  (tod.buckets || []).forEach((b) => {
+    const isBest = b.bucket === tod.best_window;
+    const card = document.createElement('div');
+    card.className = "stat";
+    card.style.position = "relative";
+    if (isBest) card.style.borderColor = "var(--blue)";
+    const smash = b.avg_smash != null ? b.avg_smash.toFixed(2) : "—";
+    const carry = b.avg_carry != null ? `${Math.round(b.avg_carry)} yd avg` : "—";
+    card.innerHTML = `
+      <p class="eyebrow">${esc(b.label.split(" (")[0].toUpperCase())}${isBest ? ' <span style="color:var(--blue);">·  best</span>' : ""}</p>
+      <div class="stat-num">${smash} <span class="unit">smash</span></div>
+      <p style="font-size:11px; color:var(--dim); margin-top:6px;">
+        ${b.shots} shot${b.shots === 1 ? "" : "s"} · ${carry}
+      </p>
+    `;
+    todWrap.appendChild(card);
+  });
+  // Lay out time of day as 3-col grid (re-use stat-grid pattern via inline style)
+  todWrap.style.display = "grid";
+  todWrap.style.gridTemplateColumns = "repeat(3, 1fr)";
+  todWrap.style.gap = "12px";
+
+  $('#player-window-note').textContent = data.shot_window_note
+    ? `data window · ${data.shot_window_note}`
+    : "";
 }
 
 // ── WIRING ───────────────────────────────────────────────────
